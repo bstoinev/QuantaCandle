@@ -33,6 +33,18 @@ QuantaCandle aims to:
 - GitHub Actions (CI)
 - AWS EC2 (deployment target)
 
+## Developer Setup
+
+After cloning this repository, run once:
+
+```bash
+bash setup-hooks.sh
+```
+
+This enables mandatory file structure validation on every commit.
+
+**Don't worry about forgetting:** If setup is missed, validation automatically activates on your next `git checkout` or `git pull`. See [GIT_HOOKS.md](GIT_HOOKS.md) for complete details.
+
 ## License
 
 MIT
