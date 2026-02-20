@@ -1,0 +1,117 @@
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.cs]
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+
+dotnet_style_require_accessibility_modifiers = always:suggestion
+
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+csharp_new_line_before_open_brace = all
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+
+############
+# Formatting 
+############
+
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = true
+csharp_new_line_before_open_brace = all
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+
+############################
+# Architecture / API hygiene
+############################
+
+# Public fields are not allowed (use properties)
+dotnet_naming_rule.no_public_fields.severity = warning
+dotnet_naming_rule.no_public_fields.symbols = public_fields
+dotnet_naming_rule.no_public_fields.style = disallowed_style
+
+dotnet_naming_symbols.public_fields.applicable_kinds = field
+dotnet_naming_symbols.public_fields.applicable_accessibilities = public
+
+dotnet_naming_style.disallowed_style.capitalization = camel_case
+
+####################
+# Naming conventions
+####################
+
+# All fields must be camelCase and must not start with underscore
+dotnet_naming_rule.fields_camel_case.severity = warning
+dotnet_naming_rule.fields_camel_case.symbols = all_fields
+dotnet_naming_rule.fields_camel_case.style = camel_case_no_prefix
+
+dotnet_naming_symbols.all_fields.applicable_kinds = field
+dotnet_naming_symbols.all_fields.applicable_accessibilities = *
+
+dotnet_naming_style.camel_case_no_prefix.required_prefix =
+dotnet_naming_style.camel_case_no_prefix.capitalization = camel_case
+
+# Public members (properties, methods, events) should be PascalCase
+dotnet_naming_rule.public_members_pascal_case.severity = warning
+dotnet_naming_rule.public_members_pascal_case.symbols = public_members
+dotnet_naming_rule.public_members_pascal_case.style = pascal_case_style
+
+dotnet_naming_symbols.public_members.applicable_kinds = property, method, event
+dotnet_naming_symbols.public_members.applicable_accessibilities = public
+
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case
+
+##################
+# Async guidelines
+##################
+
+# Disallow async void (except event handlers)
+dotnet_diagnostic.CS4014.severity = warning
+
+dotnet_diagnostic.VSTHRD100.severity = warning
+dotnet_diagnostic.VSTHRD101.severity = warning
+dotnet_diagnostic.VSTHRD200.severity = warning
+
+dotnet_diagnostic.CA2007.severity = suggestion
+
+# C# analyzers: avoid async void (event handlers are fine by convention)
+dotnet_diagnostic.CA2012.severity = warning
+
+##########################
+# Nullable reference types
+##########################
+
+# Prefer enabling nullable in projects; these settings reinforce usage patterns
+dotnet_style_null_propagation = true:suggestion
+dotnet_style_coalesce_expression = true:suggestion
+
+#################
+# Modern C# style
+#################
+
+# Prefer file-scoped namespaces (C# 10+)
+csharp_style_namespace_declarations = file_scoped:warning
+
+# Prefer expression-bodied members where it helps readability
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_expression_bodied_properties = when_on_single_line:suggestion
+
+# Prefer pattern matching
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+
+# Prefer readonly for fields that never change
+dotnet_diagnostic.CA1805.severity = suggestion
+dotnet_diagnostic.IDE0044.severity = suggestion
