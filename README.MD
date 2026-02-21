@@ -21,7 +21,7 @@ QuantaCandle aims to:
 ## Design Principles
 
 - Deterministic processing: same input -> same output
-- Validation-first: don’t trust upstream data blindly
+- Validation-first: don't trust upstream data blindly
 - Minimal moving parts: simple deployment, predictable behavior
 - Infrastructure over hype: correctness and reliability
 
@@ -43,7 +43,7 @@ bash setup-hooks.sh
 
 This enables mandatory file structure validation on every commit.
 
-**Don't worry about forgetting:** If setup is missed, validation automatically activates on your next `git checkout` or `git pull`. See [GIT_HOOKS.md](GIT_HOOKS.md) for complete details.
+See `GIT_HOOKS.md` for details, including GitHub Actions enforcement (recommended as the mandatory gate) and the `post-checkout` recovery hook.
 
 ## License
 

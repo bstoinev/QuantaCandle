@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Auto-configure Git hooks on clone/checkout
-# This ensures core.hooksPath is set even if developer forgets setup script
-# Runs automatically after git checkout or git clone operations
+# Git hook recovery: restore core.hooksPath if cleared
+#
+# Note: Git does not run hooks from the repo automatically right after clone.
+# This hook is copied into `.git/hooks/post-checkout` by `setup-hooks.sh` so it
+# can run even if `core.hooksPath` is later missing.
 
-HOOKS_PATH=$(git config core.hooksPath 2>/dev/null)
+hooks_path="$(git config core.hooksPath 2>/dev/null || true)"
 
-if [ -z "$HOOKS_PATH" ]; then
-    git config core.hooksPath .githooks
-    echo "[QuantaCandle] Git hooks automatically configured"
+if [ -z "$hooks_path" ]; then
+  git config core.hooksPath .githooks
+  echo "[QuantaCandle] Git hooks automatically configured (core.hooksPath=.githooks)"
 fi
 
 exit 0

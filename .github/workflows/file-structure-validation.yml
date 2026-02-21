@@ -1,0 +1,52 @@
+name: File structure validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate C# file structure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run validation hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x .githooks/pre-commit
+
+          event="${{ github.event_name }}"
+          head_sha="${{ github.sha }}"
+
+          if [ "$event" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          else
+            base_sha="${{ github.event.before }}"
+          fi
+
+          if [ -z "$base_sha" ] || [ "$base_sha" = "0000000000000000000000000000000000000000" ]; then
+            base_sha="$(git rev-list --max-parents=0 "$head_sha")"
+          fi
+
+          changed_cs="$(git diff --name-only --diff-filter=ACMR "$base_sha" "$head_sha" -- '*.cs' || true)"
+          if [ -z "$changed_cs" ]; then
+            echo "No changed .cs files to validate."
+            exit 0
+          fi
+
+          echo "Validating changed C# files:"
+          printf '%s\n' "$changed_cs"
+
+          printf '%s\n' "$changed_cs" | xargs -r git add --
+          .githooks/pre-commit
