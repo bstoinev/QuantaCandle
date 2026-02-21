@@ -30,10 +30,97 @@ while IFS= read -r file; do
   file_name="${file_name%.cs}"
 
   type_names="$(
-    printf '%s\n' "$content" \
-      | grep -oE '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*[[:space:]]+)*(class|interface|enum|record|struct|delegate)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' \
-      | awk '{print $NF}' \
-      || true
+    # Extract *top-level* type declarations only (ignore nested types).
+    # Heuristic: track brace depth with comments/strings stripped and treat the
+    # depth of the first type declaration as the "top-level depth" for the file.
+    printf '%s\n' "$content" | awk '
+      BEGIN {
+        depth = 0
+        top_depth = -1
+        type_count = 0
+        in_block_comment = 0
+        in_string = 0
+        in_verbatim = 0
+        in_char = 0
+        escape = 0
+      }
+
+      function strip_code(line,    out, i, c, n) {
+        out = ""
+        for (i = 1; i <= length(line); i++) {
+          c = substr(line, i, 1)
+          n = (i < length(line)) ? substr(line, i + 1, 1) : ""
+
+          if (in_block_comment) {
+            if (c == "*" && n == "/") { in_block_comment = 0; i++; }
+            continue
+          }
+
+          if (in_string) {
+            if (in_verbatim) {
+              if (c == "\"" && n == "\"") { i++; continue }
+              if (c == "\"") { in_string = 0; in_verbatim = 0 }
+              continue
+            }
+
+            if (escape) { escape = 0; continue }
+            if (c == "\\") { escape = 1; continue }
+            if (c == "\"") { in_string = 0; continue }
+            continue
+          }
+
+          if (in_char) {
+            if (escape) { escape = 0; continue }
+            if (c == "\\") { escape = 1; continue }
+            if (c == "'\''") { in_char = 0; continue }
+            continue
+          }
+
+          # Normal code
+          if (c == "/" && n == "*") { in_block_comment = 1; i++; continue }
+          if (c == "/" && n == "/") { break }
+          if (c == "@" && n == "\"") { in_string = 1; in_verbatim = 1; i++; continue }
+          if (c == "\"") { in_string = 1; in_verbatim = 0; continue }
+          if (c == "'\''") { in_char = 1; escape = 0; continue }
+
+          out = out c
+        }
+        return out
+      }
+
+      function record_type(name) {
+        if (name == "") return
+        if (top_depth < 0) top_depth = depth
+        if (depth != top_depth) return
+        types[++type_count] = name
+      }
+
+      {
+        code = strip_code($0)
+        name = ""
+
+        if (match(code, /(^|[^[:alnum:]_])(class|interface|enum|struct)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)/, m)) {
+          name = m[3]
+        } else if (match(code, /(^|[^[:alnum:]_])record([[:space:]]+(class|struct))?[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)/, m)) {
+          name = m[4]
+        } else if (match(code, /(^|[^[:alnum:]_])delegate[[:space:]]+[^;{()]*[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(/, m)) {
+          name = m[2]
+        }
+
+        record_type(name)
+
+        tmp = code
+        opens = gsub(/\{/, "", tmp)
+        tmp = code
+        closes = gsub(/\}/, "", tmp)
+        depth += opens - closes
+        if (depth < 0) depth = 0
+      }
+
+      END {
+        for (i = 1; i <= type_count; i++) print types[i]
+      }
+    ' || true
   )"
 
   if [ -z "$type_names" ]; then

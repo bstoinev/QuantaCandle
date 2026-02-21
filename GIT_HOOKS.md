@@ -7,6 +7,8 @@ This repo enforces a C# file structure policy using Git hooks. After a one-time 
 - **One type per file**: Each `.cs` file must contain at most one top-level type (class, interface, enum, record, struct, or delegate)
 - **Filename matches type name**: If a type is declared, the filename must exactly match the type name
 
+Nested types (e.g., `private class Helper { }` inside your main class) are allowed.
+
 ### Examples
 
 **Valid:**
