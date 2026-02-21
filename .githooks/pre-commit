@@ -1,85 +1,77 @@
-#!/usr/bin/env pwsh
+#!/usr/bin/env bash
 # Git Pre-Commit Hook for File Structure Validation
-# This hook validates that staged C# files follow the naming convention:
-# - Each file contains exactly one top-level type
-# - Filename matches the type name exactly
+# Validates staged C# files follow the naming convention:
+# - Each file contains at most one top-level type declaration
+# - If a type is declared, the filename must match the type name exactly
 #
 # Exit code 0 = all checks passed, commit allowed
 # Exit code 1 = violations found, commit blocked
 
-# Get the list of staged .cs files
-$stagedFiles = @(git diff --cached --name-only --diff-filter=ACM 2>$null | Where-Object { $_ -like "*.cs" })
+set -euo pipefail
 
-if ($stagedFiles.Count -eq 0) {
-    exit 0  # No C# files staged, allow commit
-}
+staged_files="$(git diff --cached --name-only --diff-filter=ACM -- '*.cs' 2>/dev/null || true)"
+if [ -z "$staged_files" ]; then
+  exit 0
+fi
 
-$validationErrors = @()
+validation_errors=()
 
-foreach ($file in $stagedFiles) {
-    # Skip bin/ and obj/ directories
-    if ($file -match "\\(obj|bin)\\") {
-        continue
-    }
+while IFS= read -r file; do
+  [ -z "$file" ] && continue
 
-    # Get the content of the staged file
-    $content = git show ":$file" 2>$null
-    if ($null -eq $content) {
-        continue
-    }
+  case "$file" in
+    */bin/*|*/obj/*) continue ;;
+  esac
 
-    $fileName = [System.IO.Path]::GetFileNameWithoutExtension($file)
+  content="$(git show ":$file" 2>/dev/null || true)"
+  [ -z "$content" ] && continue
 
-    # Find all top-level type declarations
-    $pattern = '(?:public|internal|private|protected|sealed|abstract|static|partial|\s)+(?:class|interface|enum|record|struct|delegate)\s+(\w+)'
-    $matches = [regex]::Matches($content, $pattern)
+  file_name="${file##*/}"
+  file_name="${file_name%.cs}"
 
-    if ($matches.Count -eq 0) {
-        # It's OK to have no types
-        continue
-    }
+  type_names="$(
+    printf '%s\n' "$content" \
+      | grep -oE '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*[[:space:]]+)*(class|interface|enum|record|struct|delegate)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' \
+      | awk '{print $NF}' \
+      || true
+  )"
 
-    # Extract type names from matches
-    $typeNames = @()
-    foreach ($match in $matches) {
-        $typeNames += $match.Groups[1].Value
-    }
+  if [ -z "$type_names" ]; then
+    continue
+  fi
 
-    # Check for multiple distinct types in one file
-    $uniqueTypes = $typeNames | Select-Object -Unique
-    if ($uniqueTypes.Count -gt 1) {
-        $validationErrors += "File '$file' contains multiple top-level types: $($uniqueTypes -join ', '). Each file should contain only one type."
-        continue
-    }
+  type_count="$(printf '%s\n' "$type_names" | wc -l | tr -d '[:space:]')"
+  if [ "$type_count" -gt 1 ]; then
+    types_list="$(printf '%s\n' "$type_names" | sort -u | tr '\n' ', ' | sed 's/, $//')"
+    validation_errors+=("File '$file' contains multiple top-level types: $types_list. Each file should contain only one type.")
+    continue
+  fi
 
-    # Check if filename matches type name
-    $typeName = $typeNames[0]
-    if ($typeName -ne $fileName) {
-        $validationErrors += "File '$file' declares type '$typeName'. Filename must match type name (expected: '$typeName.cs')."
-    }
-}
+  type_name="$(printf '%s\n' "$type_names" | head -n 1)"
+  if [ "$type_name" != "$file_name" ]; then
+    validation_errors+=("File '$file' declares type '$type_name'. Filename must match type name (expected: '$type_name.cs').")
+  fi
+done <<< "$staged_files"
 
-# Block commit if validation errors found
-if ($validationErrors.Count -gt 0) {
-    Write-Host ""
-    Write-Host "═════════════════════════════════════════════════════" -ForegroundColor Red
-    Write-Host "FILE STRUCTURE VALIDATION FAILED - COMMIT BLOCKED" -ForegroundColor Red
-    Write-Host "═════════════════════════════════════════════════════" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "The following file(s) violate the naming convention:" -ForegroundColor Yellow
-    Write-Host "  Rule: Filename must match the type name exactly" -ForegroundColor Yellow
-    Write-Host ""
+if [ "${#validation_errors[@]}" -gt 0 ]; then
+  echo ""
+  echo "============================================================"
+  echo "FILE STRUCTURE VALIDATION FAILED - COMMIT BLOCKED"
+  echo "============================================================"
+  echo ""
+  echo "The following file(s) violate the naming convention:"
+  echo "  Rule: Filename must match the type name exactly"
+  echo ""
 
-    foreach ($err in $validationErrors) {
-        Write-Host "  ✗ $err" -ForegroundColor Red
-    }
+  for err in "${validation_errors[@]}"; do
+    echo "  - $err"
+  done
 
-    Write-Host ""
-    Write-Host "Fix the violations by renaming files to match their type names:" -ForegroundColor Yellow
-    Write-Host "  Example: class MyClass should be in file MyClass.cs" -ForegroundColor Yellow
-    Write-Host ""
-
-    exit 1
-}
+  echo ""
+  echo "Fix the violations by renaming files to match their type names:"
+  echo "  Example: class MyClass should be in file MyClass.cs"
+  echo ""
+  exit 1
+fi
 
 exit 0
