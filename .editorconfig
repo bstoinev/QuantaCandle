@@ -51,13 +51,14 @@ dotnet_naming_style.disallowed_style.capitalization = camel_case
 # Naming conventions
 ####################
 
-# All non-private fields must be camelCase and must not start with underscore
+# Only non-private fields must be camelCase without underscore
 dotnet_naming_rule.fields_camel_case.severity = warning
-dotnet_naming_rule.fields_camel_case.symbols = all_fields
+dotnet_naming_rule.fields_camel_case.symbols = public_internal_fields
 dotnet_naming_rule.fields_camel_case.style = camel_case_no_prefix
 
-dotnet_naming_symbols.all_fields.applicable_kinds = field
-dotnet_naming_symbols.all_fields.applicable_accessibilities = public, internal, protected, protected_internal
+# This defines non-private fields only (public and internal)
+dotnet_naming_symbols.public_internal_fields.applicable_kinds = field
+dotnet_naming_symbols.public_internal_fields.applicable_accessibilities = public, internal
 
 dotnet_naming_style.camel_case_no_prefix.required_prefix =
 dotnet_naming_style.camel_case_no_prefix.capitalization = camel_case
