@@ -1,8 +1,9 @@
 ﻿using Microsoft.Extensions.Logging;
+using QuantaCandle.Core.Logging;
 
 namespace QuantaCandle.Infra.Logging;
 
-public class NLogLogMachina<T> : ILogMachinaBase<T> where T : class
+public class NLogLogMachina<T> : LogMachinaBase<T> where T : class
 {
     private readonly ILogger<T> _wrapperType;
 

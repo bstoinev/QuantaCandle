@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using QuantaCandle.Core.Logging;
 
 namespace QuantaCandle.Infra.Logging;
 

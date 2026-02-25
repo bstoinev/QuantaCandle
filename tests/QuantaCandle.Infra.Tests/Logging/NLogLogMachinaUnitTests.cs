@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Moq;
+using QuantaCandle.Core.Logging;
 using QuantaCandle.Infra.Logging;
 
 namespace QuantaCandle.Infra.Tests.Logging;

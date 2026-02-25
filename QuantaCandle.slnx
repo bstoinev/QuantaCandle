@@ -3,10 +3,11 @@
     <Project Path="src/QuantaCandle.CLI/QuantaCandle.CLI.csproj" />
     <Project Path="src/QuantaCandle.Core/QuantaCandle.Core.csproj" />
     <Project Path="src/QuantaCandle.Exchange.Bitstamp/QuantaCandle.Exchange.Bitstamp.csproj" />
+    <Project Path="src/QuantaCandle.Infra/QuantaCandle.Infra.csproj" />
     <Project Path="src/QuantaCandle.Service/QuantaCandle.Service.csproj" />
     <Project Path="src/QuantaCandle.Storage.Csv/QuantaCandle.Storage.Csv.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/QuantaCandle.Tests/QuantaCandle.Tests.csproj" />
+    <Project Path="tests/QuantaCandle.Infra.Tests/QuantaCandle.Infra.Tests.csproj" />
   </Folder>
 </Solution>

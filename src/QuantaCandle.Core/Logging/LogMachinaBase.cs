@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-namespace QuantaCandle.Infra.Logging;
+namespace QuantaCandle.Core.Logging;
 
 public abstract class LogMachinaBase<T> : ILogMachina<T> where T : class
 {
