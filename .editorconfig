@@ -84,6 +84,13 @@ dotnet_naming_symbols.public_members.applicable_accessibilities = public
 
 dotnet_naming_style.pascal_case_style.capitalization = pascal_case
 
+# Parameters (method/ctor/primary ctor parameters) should be camelCase
+dotnet_naming_rule.parameters_camel_case.severity = warning
+dotnet_naming_rule.parameters_camel_case.symbols = parameters
+dotnet_naming_rule.parameters_camel_case.style = camel_case_no_prefix
+
+dotnet_naming_symbols.parameters.applicable_kinds = parameter
+
 ##################
 # Async guidelines
 ##################
