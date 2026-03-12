@@ -1,5 +1,12 @@
-using SimpleInjector;
 using Microsoft.Extensions.Hosting;
+using QuantaCandle.Core.Logging;
+using QuantaCandle.Core;
+using QuantaCandle.Core.Trading;
+using QuantaCandle.Service.Logging;
+using QuantaCandle.Service.Options;
+using QuantaCandle.Service.Pipeline;
+using QuantaCandle.Service.Stubs;
+using QuantaCandle.Service.Time;
 
 namespace QuantaCandle.Service;
 
@@ -14,6 +21,35 @@ public class Program
         Host.CreateDefaultBuilder(args)
             .ConfigureServices(services =>
             {
-                services.AddHostedService<Worker>();
+                services.AddSingleton<ILogMachinaFactory, HostLogMachinaFactory>();
+                services.AddSingleton(typeof(ILogMachina<>), typeof(HostLogMachina<>));
+
+                services.AddSingleton<IClock, SystemClock>();
+
+                services.AddSingleton<TradePipelineStats>();
+
+                services.AddSingleton(new CollectorOptions(
+                    Instruments: new[] { Instrument.Parse("BTC-USDT") },
+                    ChannelCapacity: 10_000,
+                    BatchSize: 500,
+                    FlushInterval: TimeSpan.FromSeconds(1)));
+
+                services.AddSingleton(new RetryOptions(
+                    InitialDelay: TimeSpan.FromSeconds(1),
+                    MaxDelay: TimeSpan.FromSeconds(30)));
+
+                services.AddSingleton(new TradeSourceStubOptions(
+                    Exchange: new ExchangeId("Stub"),
+                    TradesPerSecond: 10,
+                    StartPrice: 50_000m,
+                    PriceStep: 0.01m,
+                    Quantity: 0.001m));
+
+                services.AddSingleton<ITradeSource, TradeSourceStub>();
+                services.AddSingleton<ITradeSink, TradeSinkNull>();
+                services.AddSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
+
+                services.AddSingleton<TradeIngestWorker>();
+                services.AddHostedService<TradeCollectorHostedService>();
             });
 }

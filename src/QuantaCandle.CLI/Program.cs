@@ -1,14 +1,3 @@
-﻿using QuantaCandle.CLI;
+using QuantaCandle.CLI.Commands;
 
-using SimpleInjector;
-
-Container container = CompositionRoot.ConfigureServices();
-
-try
-{
-    Console.WriteLine("Hello, World!");
-}
-finally
-{
-    await container.DisposeAsync().ConfigureAwait(false);
-}
+await CollectTradesCommand.RunAsync(args).ConfigureAwait(false);

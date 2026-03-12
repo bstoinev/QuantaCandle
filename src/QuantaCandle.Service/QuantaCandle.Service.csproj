@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\QuantaCandle.Infra\QuantaCandle.Infra.csproj" />
+    <ProjectReference Include="..\QuantaCandle.Service.Stubs\QuantaCandle.Service.Stubs.csproj" />
   </ItemGroup>
 
 </Project>

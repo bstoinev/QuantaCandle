@@ -50,6 +50,11 @@ publish/
 *.tmp
 *.temp
 
+# Local pipeline outputs
+trades-out/
+tmp-trades-out*/
+tmp-trades-out*/*
+
 # Environment
 .env
 .env.*

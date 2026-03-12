@@ -1,0 +1,12 @@
+using System;
+using System.Collections.Generic;
+using QuantaCandle.Core.Trading;
+
+namespace QuantaCandle.Service.Options;
+
+public sealed record CollectorOptions(
+    IReadOnlyList<Instrument> Instruments,
+    int ChannelCapacity,
+    int BatchSize,
+    TimeSpan FlushInterval,
+    int? MaxTradesPerSecond = null);

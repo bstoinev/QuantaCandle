@@ -2,6 +2,34 @@
     "version": "2.0.0",
     "tasks": [
         {
+        "label": "Run All Tests",
+        "type": "shell",
+        "command": "dotnet",
+        "args": [
+            "test",
+            "QuantaCandle.slnx",
+            "--configuration",
+            "Debug",
+            "--verbosity",
+            "minimal"
+        ],
+        "group": "test",
+        "problemMatcher": "$msCompile"
+        },
+        {
+        "label": "Run Tests With Coverage",
+        "type": "shell",
+        "command": "dotnet",
+        "args": [
+            "test",
+            "QuantaCandle.slnx",
+            "--collect:\"XPlat Code Coverage\"",
+            "--results-directory",
+            "TestResults"
+        ],
+        "group": "test"
+        },
+        {
             "label": "build-cli",
             "command": "dotnet",
             "type": "shell",
