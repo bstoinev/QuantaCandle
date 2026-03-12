@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\QuantaCandle.Infra\QuantaCandle.Infra.csproj" />
+    <ProjectReference Include="..\QuantaCandle.Exchange.Binance\QuantaCandle.Exchange.Binance.csproj" />
     <ProjectReference Include="..\QuantaCandle.Service\QuantaCandle.Service.csproj" />
     <ProjectReference Include="..\QuantaCandle.Service.Stubs\QuantaCandle.Service.Stubs.csproj" />
   </ItemGroup>

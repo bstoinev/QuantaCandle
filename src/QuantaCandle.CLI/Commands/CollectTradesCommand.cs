@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using QuantaCandle.Core.Logging;
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
+using QuantaCandle.Exchange.Binance;
 using QuantaCandle.Service.Logging;
 using QuantaCandle.Service.Options;
 using QuantaCandle.Service.Pipeline;
@@ -43,6 +44,8 @@ public static class CollectTradesCommand
         int tradesPerSecond = GetIntOption(options, "rate", 10);
         string sink = GetStringOption(options, "sink", "null");
         string outputDir = GetStringOption(options, "outDir", "trades-out");
+        string source = GetStringOption(options, "source", "stub");
+        string binanceWsBase = GetStringOption(options, "binanceWsBase", BinanceTradeSourceOptions.Default.BaseWebSocketUrl);
 
         IReadOnlyList<Instrument> instruments = GetInstruments(options);
 
@@ -77,10 +80,23 @@ public static class CollectTradesCommand
                     FlushInterval: flushInterval,
                     MaxTradesPerSecond: tradesPerSecond));
                 services.AddSingleton(new RetryOptions(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30)));
-                services.AddSingleton(new TradeSourceStubOptions(new ExchangeId("Stub"), tradesPerSecond, 50_000m, 0.01m, 0.001m));
 
-                services.AddSingleton<ITradeSource, TradeSourceStub>();
-                services.AddSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
+                if (source.Equals("binance", StringComparison.OrdinalIgnoreCase))
+                {
+                    services.AddSingleton(new BinanceTradeSourceOptions(
+                        BaseWebSocketUrl: binanceWsBase,
+                        InitialReconnectDelay: BinanceTradeSourceOptions.Default.InitialReconnectDelay,
+                        MaxReconnectDelay: BinanceTradeSourceOptions.Default.MaxReconnectDelay,
+                        ReceiveBufferSize: BinanceTradeSourceOptions.Default.ReceiveBufferSize));
+                    services.AddSingleton<ITradeSource, BinanceTradeSource>();
+                    services.AddSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
+                }
+                else
+                {
+                    services.AddSingleton(new TradeSourceStubOptions(new ExchangeId("Stub"), tradesPerSecond, 50_000m, 0.01m, 0.001m));
+                    services.AddSingleton<ITradeSource, TradeSourceStub>();
+                    services.AddSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
+                }
 
                 if (sink.Equals("file", StringComparison.OrdinalIgnoreCase))
                 {
@@ -260,6 +276,7 @@ public static class CollectTradesCommand
         Console.WriteLine("QuantaCandle.CLI");
         Console.WriteLine();
         Console.WriteLine("Commands:");
-        Console.WriteLine("  collect-trades --instrument BTC-USDT --duration 10m [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file] [--outDir trades-out]");
+        Console.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT --duration 10m [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file] [--outDir trades-out]");
+        Console.WriteLine("    Binance options: [--binanceWsBase wss://stream.binance.com:9443] (try wss://stream.binance.us:9443 in the US)");
     }
 }
