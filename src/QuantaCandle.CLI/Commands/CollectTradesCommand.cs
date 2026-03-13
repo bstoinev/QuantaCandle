@@ -80,6 +80,7 @@ public static class CollectTradesCommand
                     FlushInterval: flushInterval,
                     MaxTradesPerSecond: tradesPerSecond));
                 services.AddSingleton(new RetryOptions(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30)));
+                services.AddSingleton<ITradeDeduplicator, InMemoryTradeDeduplicator>();
 
                 if (source.Equals("binance", StringComparison.OrdinalIgnoreCase))
                 {
@@ -132,6 +133,7 @@ public static class CollectTradesCommand
         TradePipelineStatsSnapshot snapshot = host.Services.GetRequiredService<TradePipelineStats>().GetSnapshot();
         Console.WriteLine($"Trades received: {snapshot.TradesReceived}");
         Console.WriteLine($"Trades written:  {snapshot.TradesWritten}");
+        Console.WriteLine($"Duplicates dropped: {snapshot.DuplicatesDropped}");
         Console.WriteLine($"Batches flushed: {snapshot.BatchesFlushed}");
         Console.WriteLine($"Min timestamp:   {snapshot.MinTimestamp:O}");
         Console.WriteLine($"Max timestamp:   {snapshot.MaxTimestamp:O}");

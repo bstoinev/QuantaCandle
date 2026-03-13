@@ -24,9 +24,9 @@ public sealed class TradePipelineStatsTests
         TradePipelineStatsSnapshot snapshot = stats.GetSnapshot();
         Assert.Equal(3, snapshot.TradesReceived);
         Assert.Equal(3, snapshot.TradesWritten);
+        Assert.Equal(0, snapshot.DuplicatesDropped);
         Assert.Equal(2, snapshot.BatchesFlushed);
         Assert.Equal(t2, snapshot.MinTimestamp);
         Assert.Equal(t1, snapshot.MaxTimestamp);
     }
 }
-

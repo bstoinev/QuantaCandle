@@ -13,13 +13,20 @@ public sealed class TradeIngestWorker
 {
     private readonly ITradeSink tradeSink;
     private readonly IIngestionStateStore ingestionStateStore;
+    private readonly ITradeDeduplicator deduplicator;
     private readonly TradePipelineStats stats;
     private readonly ILogMachina<TradeIngestWorker> logMachina;
 
-    public TradeIngestWorker(ITradeSink tradeSink, IIngestionStateStore ingestionStateStore, TradePipelineStats stats, ILogMachinaFactory logMachinaFactory)
+    public TradeIngestWorker(
+        ITradeSink tradeSink,
+        IIngestionStateStore ingestionStateStore,
+        ITradeDeduplicator deduplicator,
+        TradePipelineStats stats,
+        ILogMachinaFactory logMachinaFactory)
     {
         this.tradeSink = tradeSink;
         this.ingestionStateStore = ingestionStateStore;
+        this.deduplicator = deduplicator;
         this.stats = stats;
         logMachina = logMachinaFactory.Create<TradeIngestWorker>();
     }
@@ -56,6 +63,13 @@ public sealed class TradeIngestWorker
                 while (reader.TryRead(out TradeInfo trade))
                 {
                     stats.OnTradeReceived(trade.Timestamp);
+
+                    if (!deduplicator.TryAccept(trade.Key))
+                    {
+                        stats.OnDuplicateDropped();
+                        continue;
+                    }
+
                     batch.Add(trade);
                     if (batch.Count >= options.BatchSize)
                     {
@@ -77,6 +91,13 @@ public sealed class TradeIngestWorker
             while (reader.TryRead(out TradeInfo trade))
             {
                 stats.OnTradeReceived(trade.Timestamp);
+
+                if (!deduplicator.TryAccept(trade.Key))
+                {
+                    stats.OnDuplicateDropped();
+                    continue;
+                }
+
                 batch.Add(trade);
                 if (batch.Count >= options.BatchSize)
                 {

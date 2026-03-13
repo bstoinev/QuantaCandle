@@ -7,6 +7,7 @@ public sealed class TradePipelineStats
 {
     private long tradesReceived;
     private long tradesWritten;
+    private long duplicatesDropped;
     private long batchesFlushed;
 
     private long minUtcTicks;
@@ -30,10 +31,16 @@ public sealed class TradePipelineStats
         Interlocked.Add(ref tradesWritten, insertedCount);
     }
 
+    public void OnDuplicateDropped()
+    {
+        Interlocked.Increment(ref duplicatesDropped);
+    }
+
     public TradePipelineStatsSnapshot GetSnapshot()
     {
         long received = Interlocked.Read(ref tradesReceived);
         long written = Interlocked.Read(ref tradesWritten);
+        long dropped = Interlocked.Read(ref duplicatesDropped);
         long flushed = Interlocked.Read(ref batchesFlushed);
 
         long min = Interlocked.Read(ref minUtcTicks);
@@ -42,7 +49,7 @@ public sealed class TradePipelineStats
         DateTimeOffset? minTimestamp = min == long.MaxValue ? null : new DateTimeOffset(min, TimeSpan.Zero);
         DateTimeOffset? maxTimestamp = max == long.MinValue ? null : new DateTimeOffset(max, TimeSpan.Zero);
 
-        return new TradePipelineStatsSnapshot(received, written, flushed, minTimestamp, maxTimestamp);
+        return new TradePipelineStatsSnapshot(received, written, dropped, flushed, minTimestamp, maxTimestamp);
     }
 
     private void UpdateMinMax(long utcTicks)
@@ -72,4 +79,3 @@ public sealed class TradePipelineStats
         }
     }
 }
-

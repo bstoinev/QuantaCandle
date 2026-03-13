@@ -18,13 +18,14 @@ public sealed class TradeIngestWorkerTests
         NoOpIngestionStateStore stateStore = new NoOpIngestionStateStore();
         TradePipelineStats stats = new TradePipelineStats();
 
-        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, stats, new TestLogMachinaFactory());
-
         CollectorOptions options = new CollectorOptions(
             Instruments: new[] { Instrument.Parse("BTC-USDT") },
             ChannelCapacity: 10,
             BatchSize: 3,
             FlushInterval: TimeSpan.FromHours(1));
+
+        InMemoryTradeDeduplicator deduplicator = new InMemoryTradeDeduplicator(options);
+        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, new TestLogMachinaFactory());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
 
@@ -43,6 +44,7 @@ public sealed class TradeIngestWorkerTests
         TradePipelineStatsSnapshot snapshot = stats.GetSnapshot();
         Assert.Equal(3, snapshot.TradesReceived);
         Assert.Equal(3, snapshot.TradesWritten);
+        Assert.Equal(0, snapshot.DuplicatesDropped);
         Assert.Equal(1, snapshot.BatchesFlushed);
     }
 
@@ -53,13 +55,14 @@ public sealed class TradeIngestWorkerTests
         NoOpIngestionStateStore stateStore = new NoOpIngestionStateStore();
         TradePipelineStats stats = new TradePipelineStats();
 
-        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, stats, new TestLogMachinaFactory());
-
         CollectorOptions options = new CollectorOptions(
             Instruments: new[] { Instrument.Parse("BTC-USDT") },
             ChannelCapacity: 10,
             BatchSize: 10,
             FlushInterval: TimeSpan.FromHours(1));
+
+        InMemoryTradeDeduplicator deduplicator = new InMemoryTradeDeduplicator(options);
+        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, new TestLogMachinaFactory());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
 
@@ -77,6 +80,7 @@ public sealed class TradeIngestWorkerTests
         TradePipelineStatsSnapshot snapshot = stats.GetSnapshot();
         Assert.Equal(2, snapshot.TradesReceived);
         Assert.Equal(2, snapshot.TradesWritten);
+        Assert.Equal(0, snapshot.DuplicatesDropped);
         Assert.Equal(1, snapshot.BatchesFlushed);
     }
 

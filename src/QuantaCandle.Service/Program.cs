@@ -34,6 +34,8 @@ public class Program
                     BatchSize: 500,
                     FlushInterval: TimeSpan.FromSeconds(1)));
 
+                services.AddSingleton<ITradeDeduplicator, InMemoryTradeDeduplicator>();
+
                 services.AddSingleton(new RetryOptions(
                     InitialDelay: TimeSpan.FromSeconds(1),
                     MaxDelay: TimeSpan.FromSeconds(30)));
