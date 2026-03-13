@@ -58,3 +58,7 @@ tmp-trades-out*/*
 # Environment
 .env
 .env.*
+
+# Google Drive sync folders
+.tmp.drivedownload
+.tmp.driveupload
