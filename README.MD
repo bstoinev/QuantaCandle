@@ -45,6 +45,37 @@ This enables mandatory file structure validation on every commit.
 
 See `GIT_HOOKS.md` for details, including GitHub Actions enforcement (recommended as the mandatory gate) and the `post-checkout` recovery hook.
 
+## Docker (CLI collector)
+
+Build:
+
+```bash
+docker build -t quantacandle .
+```
+
+Run (writes trade output to `/data` inside the container):
+
+```bash
+docker run --rm -v $(pwd)/trades-out:/data quantacandle collect-trades --source binance --instrument BTCUSDT --duration 30s --sink file --outDir /data
+```
+
+## CI: Build and publish to GHCR
+
+Workflow: `.github/workflows/docker-ghcr.yml`
+
+What it does:
+- Triggers on `push` to `main` and `workflow_dispatch`
+- Builds the root `Dockerfile`
+- Publishes `ghcr.io/<owner-lowercase>/quantacandle:latest` (default branch only)
+- Publishes `ghcr.io/<owner-lowercase>/quantacandle:<full-commit-sha>`
+
+GHCR settings:
+- The workflow uses `GITHUB_TOKEN` with `packages: write` permission.
+- `<owner-lowercase>` is the lowercase form of `github.repository_owner`.
+- Package visibility and pull access are managed in GitHub package settings (`Packages` -> `quantacandle`).
+- For public pulls, set the package visibility to public.
+
 ## License
 
 MIT
+
