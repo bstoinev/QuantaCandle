@@ -75,6 +75,16 @@ GHCR settings:
 - Package visibility and pull access are managed in GitHub package settings (`Packages` -> `quantacandle`).
 - For public pulls, set the package visibility to public.
 
+## CI: Validation (no publish)
+
+Workflow: `.github/workflows/validation.yml`
+
+What it does:
+- Triggers on `push` and `pull_request`
+- Restores dependencies and builds `QuantaCandle.slnx` in `Release`
+- Runs tests in `Release` with `--no-build`
+- Builds the root Docker image with `docker build` (no push)
+
 ## License
 
 MIT
