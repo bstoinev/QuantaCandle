@@ -30,3 +30,7 @@ Example:
 - [`validation.yml`](https://gpt.tecto.engineering/quanta-candle/file?path=.github/workflows/validation.yml)
 
 Keep the response easy to validate from ChatGPT by always including those Repo Lens links.
+
+3. Programming rules
+
+Use self-explanatory names for methods or else add XML comments explaining what the method do. Alwasy consider adding XML comment to public methods, especially if the method name is not trivial, such as `GetName()`

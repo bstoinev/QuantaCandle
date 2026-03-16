@@ -59,23 +59,52 @@ Run (writes trade output to `/data` inside the container):
 docker run --rm -v $(pwd)/trades-out:/data quantacandle collect-trades --source binance --instrument BTCUSDT --duration 30s --sink file --outDir /data
 ```
 
-Generate deterministic 1-minute candles from collected trades:
+Generate deterministic 1-minute candles from collected trades (CSV default):
 
 ```bash
 docker run --rm -v $(pwd)/trades-out:/trades -v $(pwd)/candles-out:/candles quantacandle generate-candles --source binance --timeframe 1m --inDir /trades --outDir /candles
 ```
 
+Generate candles as JSONL (optional):
+
+```bash
+docker run --rm -v $(pwd)/trades-out:/trades -v $(pwd)/candles-out:/candles quantacandle generate-candles --source binance --timeframe 1m --format jsonl --inDir /trades --outDir /candles
+```
+
 Input format (trade files): `<inDir>/<INSTRUMENT>/<yyyy-MM-dd>.jsonl`
 
-Output format (candle files): `<outDir>/binance/1m/<INSTRUMENT>/<yyyy-MM-dd>.jsonl`
+Default candle output format (CSV): `<outDir>/binance/1m/<INSTRUMENT>/<yyyy-MM-dd>.csv`
 
-Each candle line includes:
-- `openTime` (UTC minute boundary)
-- `open`, `high`, `low`, `close`
-- `volume`
-- `tradeCount`
+JSONL candle output format (when `--format jsonl`): `<outDir>/binance/1m/<INSTRUMENT>/<yyyy-MM-dd>.jsonl`
 
-Gap minutes (no trades) are emitted with `open/high/low/close = null`, `volume = 0`, and `tradeCount = 0`.
+CSV header columns:
+- `OpenTimeUtc,Instrument,Open,High,Low,Close,Volume,TradeCount`
+
+Gap minutes (no trades) are emitted as:
+- CSV: `Open,High,Low,Close` are empty; `Volume=0`; `TradeCount=0`
+- JSONL: `open/high/low/close = null`; `volume = 0`; `tradeCount = 0`
+
+## Local end-to-end validation
+
+From the project root (PowerShell), run:
+
+```powershell
+$root = Join-Path (Get-Location) "tmp-e2e"
+$tradeDir = Join-Path $root "trades"
+$candleDir = Join-Path $root "candles"
+New-Item -ItemType Directory -Force -Path $tradeDir,$candleDir | Out-Null
+
+dotnet run -c Release --project src\QuantaCandle.CLI -- collect-trades --source binance --instrument BTCUSDT --duration 30s --sink file --outDir $tradeDir --binanceWsBase wss://stream.binance.us:9443
+
+dotnet run -c Release --project src\QuantaCandle.CLI -- generate-candles --source binance --timeframe 1m --inDir $tradeDir --outDir $candleDir
+dotnet run -c Release --project src\QuantaCandle.CLI -- generate-candles --source binance --timeframe 1m --format jsonl --inDir $tradeDir --outDir $candleDir
+
+Get-ChildItem -Recurse $candleDir -Filter *.csv | Sort-Object FullName
+$firstCandleFile = Get-ChildItem -Recurse (Join-Path $candleDir "binance\1m\BTC-USDT") -Filter *.csv | Sort-Object FullName | Select-Object -First 1
+Get-Content $firstCandleFile.FullName | Select-Object -First 20
+```
+
+Use `wss://stream.binance.com:9443` instead of `wss://stream.binance.us:9443` if you are outside the US.
 
 ## CI: Build and publish to GHCR
 

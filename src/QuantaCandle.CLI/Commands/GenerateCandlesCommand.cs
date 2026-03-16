@@ -35,13 +35,14 @@ public static class GenerateCandlesCommand
         string timeframe = GetStringOption(options, "timeframe", "1m");
         string inputDirectory = GetStringOption(options, "inDir", "trades-out");
         string outputDirectory = GetStringOption(options, "outDir", "candles-out");
+        string format = GetStringOption(options, "format", "csv");
 
         TradeToCandleGenerator generator = new TradeToCandleGenerator();
 
         try
         {
             CandleGenerationResult result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(inputDirectory, outputDirectory, source, timeframe),
+                new TradeToCandleGeneratorOptions(inputDirectory, outputDirectory, source, timeframe, format),
                 CancellationToken.None).ConfigureAwait(false);
 
             Console.WriteLine($"Input trades:       {result.InputTradeCount}");
@@ -102,10 +103,12 @@ public static class GenerateCandlesCommand
         Console.WriteLine("generate-candles");
         Console.WriteLine();
         Console.WriteLine("Usage:");
-        Console.WriteLine("  generate-candles --source binance --timeframe 1m [--inDir trades-out] [--outDir candles-out]");
+        Console.WriteLine("  generate-candles --source binance --timeframe 1m [--format csv|jsonl] [--inDir trades-out] [--outDir candles-out]");
         Console.WriteLine();
         Console.WriteLine("Notes:");
         Console.WriteLine("  - Reads trade JSONL files produced by collect-trades --sink file.");
-        Console.WriteLine("  - Writes deterministic candle JSONL files to <outDir>/<source>/<timeframe>/<INSTRUMENT>/<yyyy-MM-dd>.jsonl.");
+        Console.WriteLine("  - Default output format is CSV.");
+        Console.WriteLine("  - CSV output path:   <outDir>/<source>/<timeframe>/<INSTRUMENT>/<yyyy-MM-dd>.csv");
+        Console.WriteLine("  - JSONL output path: <outDir>/<source>/<timeframe>/<INSTRUMENT>/<yyyy-MM-dd>.jsonl (use --format jsonl)");
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -12,7 +13,7 @@ namespace QuantaCandle.Service.Tests.Stubs;
 public sealed class TradeToCandleGeneratorTests
 {
     [Fact]
-    public async Task Aggregates_basic_1m_candles()
+    public async Task Defaults_to_csv_output_when_format_is_omitted()
     {
         string root = CreateTempRoot();
         try
@@ -30,28 +31,134 @@ public sealed class TradeToCandleGeneratorTests
                 new TradeToCandleGeneratorOptions(inputDirectory, outputDirectory, "binance", "1m"),
                 CancellationToken.None);
 
-            Assert.Equal(3, result.InputTradeCount);
-            Assert.Equal(3, result.UniqueTradeCount);
             Assert.Equal(2, result.CandleCount);
 
-            JsonElement[] candles = await ReadCandleFileAsync(outputDirectory, "BTC-USDT", "2026-03-12");
-            Assert.Equal(2, candles.Length);
+            string csvPath = Path.Combine(outputDirectory, "binance", "1m", "BTC-USDT", "2026-03-12.csv");
+            string jsonlPath = Path.Combine(outputDirectory, "binance", "1m", "BTC-USDT", "2026-03-12.jsonl");
+            Assert.True(File.Exists(csvPath));
+            Assert.False(File.Exists(jsonlPath));
 
-            Assert.Equal(DateTimeOffset.Parse("2026-03-12T12:00:00+00:00"), candles[0].GetProperty("openTime").GetDateTimeOffset());
+            string[][] rows = await ReadCsvRowsAsync(csvPath);
+            Assert.Equal("OpenTimeUtc", rows[0][0]);
+            Assert.Equal("Instrument", rows[0][1]);
+            Assert.Equal("Open", rows[0][2]);
+            Assert.Equal("High", rows[0][3]);
+            Assert.Equal("Low", rows[0][4]);
+            Assert.Equal("Close", rows[0][5]);
+            Assert.Equal("Volume", rows[0][6]);
+            Assert.Equal("TradeCount", rows[0][7]);
+
+            Assert.Equal(DateTimeOffset.Parse("2026-03-12T12:00:00Z"), DateTimeOffset.Parse(rows[1][0], CultureInfo.InvariantCulture));
+            Assert.Equal("BTC-USDT", rows[1][1]);
+            Assert.Equal("100", rows[1][2]);
+            Assert.Equal("101", rows[1][3]);
+            Assert.Equal("100", rows[1][4]);
+            Assert.Equal("101", rows[1][5]);
+            Assert.Equal("0.3", rows[1][6]);
+            Assert.Equal("2", rows[1][7]);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task Supports_explicit_csv_output()
+    {
+        string root = CreateTempRoot();
+        try
+        {
+            string inputDirectory = Path.Combine(root, "input");
+            string outputDirectory = Path.Combine(root, "output");
+
+            await WriteTradeFileAsync(inputDirectory, "BTC-USDT", "2026-03-12.jsonl",
+                Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m));
+
+            TradeToCandleGenerator generator = new TradeToCandleGenerator();
+            await generator.GenerateAsync(
+                new TradeToCandleGeneratorOptions(inputDirectory, outputDirectory, "binance", "1m", "csv"),
+                CancellationToken.None);
+
+            string csvPath = Path.Combine(outputDirectory, "binance", "1m", "BTC-USDT", "2026-03-12.csv");
+            Assert.True(File.Exists(csvPath));
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task Supports_explicit_jsonl_output()
+    {
+        string root = CreateTempRoot();
+        try
+        {
+            string inputDirectory = Path.Combine(root, "input");
+            string outputDirectory = Path.Combine(root, "output");
+
+            await WriteTradeFileAsync(inputDirectory, "BTC-USDT", "2026-03-12.jsonl",
+                Trade("binance", "BTC-USDT", "2", "2026-03-12T12:00:20Z", 101m, 0.2m),
+                Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m));
+
+            TradeToCandleGenerator generator = new TradeToCandleGenerator();
+            await generator.GenerateAsync(
+                new TradeToCandleGeneratorOptions(inputDirectory, outputDirectory, "binance", "1m", "jsonl"),
+                CancellationToken.None);
+
+            string jsonlPath = Path.Combine(outputDirectory, "binance", "1m", "BTC-USDT", "2026-03-12.jsonl");
+            string csvPath = Path.Combine(outputDirectory, "binance", "1m", "BTC-USDT", "2026-03-12.csv");
+
+            Assert.True(File.Exists(jsonlPath));
+            Assert.False(File.Exists(csvPath));
+
+            JsonElement[] candles = await ReadJsonlFileAsync(jsonlPath);
+            Assert.Single(candles);
             Assert.Equal(100m, candles[0].GetProperty("open").GetDecimal());
             Assert.Equal(101m, candles[0].GetProperty("high").GetDecimal());
             Assert.Equal(100m, candles[0].GetProperty("low").GetDecimal());
             Assert.Equal(101m, candles[0].GetProperty("close").GetDecimal());
             Assert.Equal(0.3m, candles[0].GetProperty("volume").GetDecimal());
-            Assert.Equal(2, candles[0].GetProperty("tradeCount").GetInt32());
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
 
-            Assert.Equal(DateTimeOffset.Parse("2026-03-12T12:01:00+00:00"), candles[1].GetProperty("openTime").GetDateTimeOffset());
-            Assert.Equal(99m, candles[1].GetProperty("open").GetDecimal());
-            Assert.Equal(99m, candles[1].GetProperty("high").GetDecimal());
-            Assert.Equal(99m, candles[1].GetProperty("low").GetDecimal());
-            Assert.Equal(99m, candles[1].GetProperty("close").GetDecimal());
-            Assert.Equal(0.3m, candles[1].GetProperty("volume").GetDecimal());
-            Assert.Equal(1, candles[1].GetProperty("tradeCount").GetInt32());
+    [Fact]
+    public async Task Emits_gap_candles_as_empty_ohlc_in_csv()
+    {
+        string root = CreateTempRoot();
+        try
+        {
+            string inputDirectory = Path.Combine(root, "input");
+            string outputDirectory = Path.Combine(root, "output");
+
+            await WriteTradeFileAsync(inputDirectory, "BTC-USDT", "2026-03-12.jsonl",
+                Trade("binance", "BTC-USDT", "1", "2026-03-12T00:00:10Z", 100m, 1.0m),
+                Trade("binance", "BTC-USDT", "2", "2026-03-12T00:02:15Z", 102m, 0.5m));
+
+            TradeToCandleGenerator generator = new TradeToCandleGenerator();
+            await generator.GenerateAsync(
+                new TradeToCandleGeneratorOptions(inputDirectory, outputDirectory, "binance", "1m", "csv"),
+                CancellationToken.None);
+
+            string csvPath = Path.Combine(outputDirectory, "binance", "1m", "BTC-USDT", "2026-03-12.csv");
+            string[][] rows = await ReadCsvRowsAsync(csvPath);
+
+            Assert.Equal(4, rows.Length);
+
+            string[] gap = rows[2];
+            Assert.Equal(DateTimeOffset.Parse("2026-03-12T00:01:00Z"), DateTimeOffset.Parse(gap[0], CultureInfo.InvariantCulture));
+            Assert.Equal("BTC-USDT", gap[1]);
+            Assert.Equal(string.Empty, gap[2]);
+            Assert.Equal(string.Empty, gap[3]);
+            Assert.Equal(string.Empty, gap[4]);
+            Assert.Equal(string.Empty, gap[5]);
+            Assert.Equal("0", gap[6]);
+            Assert.Equal("0", gap[7]);
         }
         finally
         {
@@ -86,8 +193,8 @@ public sealed class TradeToCandleGeneratorTests
             await generator.GenerateAsync(new TradeToCandleGeneratorOptions(inputA, outputA, "binance", "1m"), CancellationToken.None);
             await generator.GenerateAsync(new TradeToCandleGeneratorOptions(inputB, outputB, "binance", "1m"), CancellationToken.None);
 
-            IReadOnlyList<string> snapshotA = await SnapshotOutputAsync(outputA);
-            IReadOnlyList<string> snapshotB = await SnapshotOutputAsync(outputB);
+            IReadOnlyList<string> snapshotA = await SnapshotOutputAsync(outputA, "*.csv");
+            IReadOnlyList<string> snapshotB = await SnapshotOutputAsync(outputB, "*.csv");
             Assert.Equal(snapshotA, snapshotB);
         }
         finally
@@ -119,48 +226,10 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal(2, result.UniqueTradeCount);
             Assert.Equal(1, result.DuplicatesDropped);
 
-            JsonElement[] candles = await ReadCandleFileAsync(outputDirectory, "BTC-USDT", "2026-03-12");
-            Assert.Single(candles);
-            Assert.Equal(0.75m, candles[0].GetProperty("volume").GetDecimal());
-            Assert.Equal(2, candles[0].GetProperty("tradeCount").GetInt32());
-        }
-        finally
-        {
-            DeleteDirectoryIfExists(root);
-        }
-    }
-
-    [Fact]
-    public async Task Emits_gap_candles_with_null_ohlc_and_zero_volume()
-    {
-        string root = CreateTempRoot();
-        try
-        {
-            string inputDirectory = Path.Combine(root, "input");
-            string outputDirectory = Path.Combine(root, "output");
-
-            await WriteTradeFileAsync(inputDirectory, "BTC-USDT", "2026-03-12.jsonl",
-                Trade("binance", "BTC-USDT", "1", "2026-03-12T00:00:10Z", 100m, 1.0m),
-                Trade("binance", "BTC-USDT", "2", "2026-03-12T00:02:15Z", 102m, 0.5m));
-
-            TradeToCandleGenerator generator = new TradeToCandleGenerator();
-            CandleGenerationResult result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(inputDirectory, outputDirectory, "binance", "1m"),
-                CancellationToken.None);
-
-            Assert.Equal(3, result.CandleCount);
-
-            JsonElement[] candles = await ReadCandleFileAsync(outputDirectory, "BTC-USDT", "2026-03-12");
-            Assert.Equal(3, candles.Length);
-
-            JsonElement gap = candles[1];
-            Assert.Equal(DateTimeOffset.Parse("2026-03-12T00:01:00+00:00"), gap.GetProperty("openTime").GetDateTimeOffset());
-            Assert.Equal(JsonValueKind.Null, gap.GetProperty("open").ValueKind);
-            Assert.Equal(JsonValueKind.Null, gap.GetProperty("high").ValueKind);
-            Assert.Equal(JsonValueKind.Null, gap.GetProperty("low").ValueKind);
-            Assert.Equal(JsonValueKind.Null, gap.GetProperty("close").ValueKind);
-            Assert.Equal(0m, gap.GetProperty("volume").GetDecimal());
-            Assert.Equal(0, gap.GetProperty("tradeCount").GetInt32());
+            string csvPath = Path.Combine(outputDirectory, "binance", "1m", "BTC-USDT", "2026-03-12.csv");
+            string[][] rows = await ReadCsvRowsAsync(csvPath);
+            Assert.Equal("0.75", rows[1][6]);
+            Assert.Equal("2", rows[1][7]);
         }
         finally
         {
@@ -190,7 +259,7 @@ public sealed class TradeToCandleGeneratorTests
             exchange,
             instrument,
             tradeId,
-            timestamp = DateTimeOffset.Parse(timestamp),
+            timestamp = DateTimeOffset.Parse(timestamp, CultureInfo.InvariantCulture),
             price,
             quantity,
         };
@@ -207,9 +276,17 @@ public sealed class TradeToCandleGeneratorTests
         await File.WriteAllTextAsync(path, payload, CancellationToken.None);
     }
 
-    private static async Task<JsonElement[]> ReadCandleFileAsync(string outputDirectory, string instrument, string day)
+    private static async Task<string[][]> ReadCsvRowsAsync(string path)
     {
-        string path = Path.Combine(outputDirectory, "binance", "1m", instrument, $"{day}.jsonl");
+        string[] lines = await File.ReadAllLinesAsync(path, CancellationToken.None);
+        return lines
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Select(line => line.Split(','))
+            .ToArray();
+    }
+
+    private static async Task<JsonElement[]> ReadJsonlFileAsync(string path)
+    {
         string[] lines = await File.ReadAllLinesAsync(path, CancellationToken.None);
 
         List<JsonElement> values = new List<JsonElement>(lines.Length);
@@ -227,7 +304,7 @@ public sealed class TradeToCandleGeneratorTests
         return values.ToArray();
     }
 
-    private static async Task<IReadOnlyList<string>> SnapshotOutputAsync(string outputDirectory)
+    private static async Task<IReadOnlyList<string>> SnapshotOutputAsync(string outputDirectory, string pattern)
     {
         string root = Path.Combine(outputDirectory, "binance", "1m");
         if (!Directory.Exists(root))
@@ -235,7 +312,7 @@ public sealed class TradeToCandleGeneratorTests
             return Array.Empty<string>();
         }
 
-        string[] files = Directory.GetFiles(root, "*.jsonl", SearchOption.AllDirectories);
+        string[] files = Directory.GetFiles(root, pattern, SearchOption.AllDirectories);
         Array.Sort(files, StringComparer.Ordinal);
 
         List<string> snapshot = new List<string>(files.Length);

@@ -36,5 +36,5 @@ static void PrintHelp()
     Console.WriteLine();
     Console.WriteLine("Commands:");
     Console.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT --duration 10m [--sink null|file] [--outDir trades-out]");
-    Console.WriteLine("  generate-candles --source binance --timeframe 1m [--inDir trades-out] [--outDir candles-out]");
+    Console.WriteLine("  generate-candles --source binance --timeframe 1m [--format csv|jsonl] [--inDir trades-out] [--outDir candles-out]");
 }

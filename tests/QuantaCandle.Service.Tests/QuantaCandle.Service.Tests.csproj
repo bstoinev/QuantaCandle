@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\QuantaCandle.CLI\QuantaCandle.CLI.csproj" />
     <ProjectReference Include="..\..\src\QuantaCandle.Service\QuantaCandle.Service.csproj" />
     <ProjectReference Include="..\..\src\QuantaCandle.Service.Stubs\QuantaCandle.Service.Stubs.csproj" />
     <ProjectReference Include="..\..\src\QuantaCandle.Exchange.Binance\QuantaCandle.Exchange.Binance.csproj" />

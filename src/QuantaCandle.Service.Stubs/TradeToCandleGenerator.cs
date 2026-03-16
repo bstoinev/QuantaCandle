@@ -17,6 +17,7 @@ public sealed class TradeToCandleGenerator
 
         string source = NormalizeSource(options.Source);
         string timeframe = NormalizeTimeframe(options.Timeframe);
+        string format = NormalizeFormat(options.Format);
         string inputDirectory = Path.GetFullPath(options.InputDirectory);
         string outputRootDirectory = GetOutputRootDirectory(options.OutputDirectory, source, timeframe);
 
@@ -43,7 +44,7 @@ public sealed class TradeToCandleGenerator
                 OutputFileCount: 0);
         }
 
-        Dictionary<string, List<CandleRow>> candlesByPath = BuildCandlesByOutputPath(uniqueTrades, source, timeframe, outputRootDirectory);
+        Dictionary<string, List<CandleRow>> candlesByPath = BuildCandlesByOutputPath(uniqueTrades, source, timeframe, format, outputRootDirectory);
         string[] outputPaths = candlesByPath.Keys.OrderBy(path => path, StringComparer.Ordinal).ToArray();
 
         int candleCount = 0;
@@ -60,24 +61,9 @@ public sealed class TradeToCandleGenerator
             List<CandleRow> candles = candlesByPath[outputPath];
             candleCount += candles.Count;
 
-            string[] lines = new string[candles.Count];
-            for (int i = 0; i < candles.Count; i++)
-            {
-                CandleRow candle = candles[i];
-                lines[i] = JsonSerializer.Serialize(new
-                {
-                    source = candle.Source,
-                    instrument = candle.Instrument,
-                    timeframe = candle.Timeframe,
-                    openTime = candle.OpenTime,
-                    open = candle.Open,
-                    high = candle.High,
-                    low = candle.Low,
-                    close = candle.Close,
-                    volume = candle.Volume,
-                    tradeCount = candle.TradeCount,
-                });
-            }
+            string[] lines = format.Equals("csv", StringComparison.Ordinal)
+                ? BuildCsvLines(candles)
+                : BuildJsonlLines(candles);
 
             string payload = string.Join(Environment.NewLine, lines) + Environment.NewLine;
             await File.WriteAllTextAsync(outputPath, payload, cancellationToken).ConfigureAwait(false);
@@ -89,6 +75,52 @@ public sealed class TradeToCandleGenerator
             DuplicatesDropped: duplicatesDropped,
             CandleCount: candleCount,
             OutputFileCount: outputPaths.Length);
+    }
+
+    private static string[] BuildJsonlLines(IReadOnlyList<CandleRow> candles)
+    {
+        string[] lines = new string[candles.Count];
+        for (int i = 0; i < candles.Count; i++)
+        {
+            CandleRow candle = candles[i];
+            lines[i] = JsonSerializer.Serialize(new
+            {
+                source = candle.Source,
+                instrument = candle.Instrument,
+                timeframe = candle.Timeframe,
+                openTime = candle.OpenTime,
+                open = candle.Open,
+                high = candle.High,
+                low = candle.Low,
+                close = candle.Close,
+                volume = candle.Volume,
+                tradeCount = candle.TradeCount,
+            });
+        }
+
+        return lines;
+    }
+
+    private static string[] BuildCsvLines(IReadOnlyList<CandleRow> candles)
+    {
+        string[] lines = new string[candles.Count + 1];
+        lines[0] = "OpenTimeUtc,Instrument,Open,High,Low,Close,Volume,TradeCount";
+
+        for (int i = 0; i < candles.Count; i++)
+        {
+            CandleRow candle = candles[i];
+            string openTimeUtc = candle.OpenTime.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+            string open = candle.Open?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            string high = candle.High?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            string low = candle.Low?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            string close = candle.Close?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            string volume = candle.Volume.ToString(CultureInfo.InvariantCulture);
+            string tradeCount = candle.TradeCount.ToString(CultureInfo.InvariantCulture);
+
+            lines[i + 1] = $"{openTimeUtc},{candle.Instrument},{open},{high},{low},{close},{volume},{tradeCount}";
+        }
+
+        return lines;
     }
 
     private static bool PathsEqual(string left, string right)
@@ -148,6 +180,22 @@ public sealed class TradeToCandleGenerator
         }
 
         return normalized;
+    }
+
+    private static string NormalizeFormat(string format)
+    {
+        if (string.IsNullOrWhiteSpace(format))
+        {
+            return "csv";
+        }
+
+        string normalized = format.Trim().ToLowerInvariant();
+        if (normalized.Equals("csv", StringComparison.Ordinal) || normalized.Equals("jsonl", StringComparison.Ordinal))
+        {
+            return normalized;
+        }
+
+        throw new NotSupportedException("Only output formats 'csv' and 'jsonl' are currently supported.");
     }
 
     private static async Task<List<TradeRow>> LoadTradesAsync(string inputDirectory, string source, CancellationToken cancellationToken)
@@ -261,9 +309,11 @@ public sealed class TradeToCandleGenerator
         IReadOnlyList<TradeRow> uniqueTrades,
         string source,
         string timeframe,
+        string format,
         string outputRootDirectory)
     {
         Dictionary<string, List<CandleRow>> candlesByPath = new Dictionary<string, List<CandleRow>>(StringComparer.Ordinal);
+        string extension = format.Equals("csv", StringComparison.Ordinal) ? ".csv" : ".jsonl";
 
         int index = 0;
         while (index < uniqueTrades.Count)
@@ -275,7 +325,7 @@ public sealed class TradeToCandleGenerator
                 index++;
             }
 
-            AppendInstrumentCandles(uniqueTrades, start, index, source, timeframe, instrument, outputRootDirectory, candlesByPath);
+            AppendInstrumentCandles(uniqueTrades, start, index, source, timeframe, instrument, extension, outputRootDirectory, candlesByPath);
         }
 
         return candlesByPath;
@@ -288,6 +338,7 @@ public sealed class TradeToCandleGenerator
         string source,
         string timeframe,
         string instrument,
+        string extension,
         string outputRootDirectory,
         Dictionary<string, List<CandleRow>> candlesByPath)
     {
@@ -307,7 +358,7 @@ public sealed class TradeToCandleGenerator
             CandleRow candle = BuildCandleForBucket(uniqueTrades, bucketStart, tradeIndex, source, timeframe, instrument, currentBucket);
 
             string day = currentBucket.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            string outputPath = Path.Combine(outputRootDirectory, instrument, $"{day}.jsonl");
+            string outputPath = Path.Combine(outputRootDirectory, instrument, $"{day}{extension}");
             if (!candlesByPath.TryGetValue(outputPath, out List<CandleRow>? list))
             {
                 list = new List<CandleRow>();
