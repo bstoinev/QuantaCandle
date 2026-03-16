@@ -1,7 +1,7 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  ecr_repository_name = "${var.name_prefix}-cli"
+  ecr_repository_name = "${var.name_prefix}"
   cluster_name        = "${var.name_prefix}-cluster"
   task_family         = "${var.name_prefix}-collector"
   container_name      = "quanta-candle-cli"
