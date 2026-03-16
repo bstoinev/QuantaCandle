@@ -106,6 +106,44 @@ Get-Content $firstCandleFile.FullName | Select-Object -First 20
 
 Use `wss://stream.binance.com:9443` instead of `wss://stream.binance.us:9443` if you are outside the US.
 
+## AWS Scheduled Fargate Foundation
+
+This repository now includes Terraform infrastructure for running QuantaCandle as a scheduled ECS Fargate task with persistent EFS storage.
+
+Path: `infra/aws/terraform`
+
+Provisioned resources:
+- Amazon ECR repository for the QuantaCandle image
+- Amazon ECS cluster and Fargate task definition
+- Amazon EFS file system and mount targets
+- EventBridge Scheduler schedule to invoke ECS `RunTask`
+- IAM roles/policies scoped to task execution and scheduler task launch
+
+The scheduled task runs the existing CLI entrypoint with explicit args equivalent to:
+
+```text
+collect-trades --source <source> --instrument <instrument> --duration <duration> --sink file --outDir <output_dir>
+```
+
+(`--binanceWsBase` is appended only when `binance_ws_base` is set.)
+
+Quick start:
+
+```bash
+cd infra/aws/terraform
+cp terraform.tfvars.example terraform.tfvars
+terraform init
+terraform plan
+terraform apply
+```
+
+Configure schedule and collection behavior with Terraform variables:
+- `schedule_expression`, `schedule_timezone`
+- `source`, `instrument`, `duration`, `output_dir`
+- `image_tag`, `binance_ws_base`
+
+Use an EFS-backed output directory such as `/data/trades-out` so collected files persist between scheduled runs.
+
 ## CI: Build and publish to GHCR
 
 Workflow: `.github/workflows/docker-ghcr.yml`
