@@ -59,6 +59,24 @@ Run (writes trade output to `/data` inside the container):
 docker run --rm -v $(pwd)/trades-out:/data quantacandle collect-trades --source binance --instrument BTCUSDT --duration 30s --sink file --outDir /data
 ```
 
+Generate deterministic 1-minute candles from collected trades:
+
+```bash
+docker run --rm -v $(pwd)/trades-out:/trades -v $(pwd)/candles-out:/candles quantacandle generate-candles --source binance --timeframe 1m --inDir /trades --outDir /candles
+```
+
+Input format (trade files): `<inDir>/<INSTRUMENT>/<yyyy-MM-dd>.jsonl`
+
+Output format (candle files): `<outDir>/binance/1m/<INSTRUMENT>/<yyyy-MM-dd>.jsonl`
+
+Each candle line includes:
+- `openTime` (UTC minute boundary)
+- `open`, `high`, `low`, `close`
+- `volume`
+- `tradeCount`
+
+Gap minutes (no trades) are emitted with `open/high/low/close = null`, `volume = 0`, and `tradeCount = 0`.
+
 ## CI: Build and publish to GHCR
 
 Workflow: `.github/workflows/docker-ghcr.yml`
