@@ -108,7 +108,7 @@ Use `wss://stream.binance.com:9443` instead of `wss://stream.binance.us:9443` if
 
 ## AWS Scheduled Fargate Foundation
 
-This repository now includes Terraform infrastructure for running QuantaCandle as a scheduled ECS Fargate task with persistent EFS storage.
+The repo includes Terraform infrastructure for running Quanta Candle as a scheduled ECS Fargate task with persistent EFS storage.
 
 Path: `infra/aws/terraform`
 
@@ -149,7 +149,7 @@ Use an EFS-backed output directory such as `/data/trades-out` so collected files
 Workflow: `.github/workflows/docker-ghcr.yml`
 
 What it does:
-- Triggers on `push` to `main` and `workflow_dispatch`
+- Triggers on `push` to `master` and `workflow_dispatch`
 - Builds the root `Dockerfile`
 - Publishes `ghcr.io/<owner-lowercase>/quantacandle:latest` (default branch only)
 - Publishes `ghcr.io/<owner-lowercase>/quantacandle:<full-commit-sha>`
@@ -162,7 +162,7 @@ GHCR settings:
 
 ## CI: Validation (no publish)
 
-Workflow: `.github/workflows/validation.yml`
+Workflow: `.github/workflows/ci-workflow.yml`
 
 What it does:
 - Triggers on `push` and `pull_request`

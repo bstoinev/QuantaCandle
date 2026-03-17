@@ -28,7 +28,7 @@ Example override for cluster/service targeting:
 ```powershell
 .\infra\aws\trigger-manual-trade-collection.ps1 `
   -EcsClusterName quanta-candle `
-  -EcsServiceName quanta-candle
+  -EcsServiceName quanta-candle-service-kzkwo7xr
 ```
 
 ## 4) What the script prints
@@ -41,3 +41,37 @@ Example override for cluster/service targeting:
 - Collector output directory
 - EFS filesystem ID
 - Follow-up commands for `aws ecs describe-services` and `aws logs describe-log-streams`
+
+## 5) Post-trigger validation
+
+1. Check ECS service events:
+
+```powershell
+$region = terraform -chdir=infra/aws/terraform output -raw aws_region
+aws ecs describe-services `
+  --region $region `
+  --cluster quanta-candle `
+  --services quanta-candle-service-kzkwo7xr `
+  --query "services[0].events[0:10].[createdAt,message]" `
+  --output table
+```
+
+2. Check the latest CloudWatch log stream in `/ecs/quanta-candle`:
+
+```powershell
+$region = terraform -chdir=infra/aws/terraform output -raw aws_region
+aws logs describe-log-streams `
+  --region $region `
+  --log-group-name /ecs/quanta-candle `
+  --order-by LastEventTime `
+  --descending `
+  --max-items 1
+```
+
+3. Verify output files are appearing on EFS at the expected mounted path:
+
+```powershell
+terraform -chdir=infra/aws/terraform output -raw collector_output_directory
+```
+
+Use the returned directory (for example `/data/trades-out`) and verify that new trade files are created under the mounted EFS path for that directory after deployment.

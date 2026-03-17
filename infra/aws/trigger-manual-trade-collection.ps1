@@ -2,7 +2,7 @@
     [string]$TerraformDir = (Join-Path $PSScriptRoot "terraform"),
     [string]$AwsProfile = "quanta-candle",
     [string]$EcsClusterName = "quanta-candle",
-    [string]$EcsServiceName = "quanta-candle"
+    [string]$EcsServiceName = "quanta-candle-service-kzkwo7xr"
 )
 
 $PSNativeCommandUseErrorActionPreference = $false
