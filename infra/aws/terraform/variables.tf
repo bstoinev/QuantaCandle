@@ -49,8 +49,8 @@ variable "schedule_timezone" {
   default     = "UTC"
 }
 
-variable "source" {
-  description = "CLI --source argument for collect-trades."
+variable "trade_source" {
+  description = "CLI --trade-source argument for collect-trades."
   type        = string
   default     = "binance"
 }

@@ -10,7 +10,7 @@ locals {
   collect_trades_command = concat(
     [
       "collect-trades",
-      "--source", var.source,
+      "--trade-source", var.trade_source,
       "--instrument", var.instrument,
       "--duration", var.duration,
       "--sink", "file",
@@ -23,8 +23,7 @@ locals {
     [aws_security_group.ecs_task.id],
     var.additional_task_security_group_ids
   )
-
-  scheduler_assign_public_ip = var.assign_public_ip ? "ENABLED" : "DISABLED"
+  scheduler_assign_public_ip  = var.assign_public_ip
 }
 
 resource "aws_ecr_repository" "quanta_candle" {
