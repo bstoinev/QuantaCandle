@@ -44,10 +44,18 @@ public static class CollectTradesCommand
         int tradesPerSecond = GetIntOption(options, "rate", 10);
         string sink = GetStringOption(options, "sink", "null");
         string outputDir = GetStringOption(options, "outDir", "trades-out");
+        string s3Bucket = GetStringOptionOrEnvironment(options, "s3Bucket", "QUANTA_CANDLE_S3_BUCKET", "QUANTA_S3_BUCKET", "S3_BUCKET");
+        string s3Prefix = GetStringOptionOrEnvironment(options, "s3Prefix", "QUANTA_CANDLE_S3_PREFIX", "QUANTA_S3_PREFIX", "S3_PREFIX");
         string source = GetStringOption(options, "source", "stub");
         string binanceWsBase = GetStringOption(options, "binanceWsBase", BinanceTradeSourceOptions.Default.BaseWebSocketUrl);
 
         IReadOnlyList<Instrument> instruments = GetInstruments(options);
+
+        if (sink.Equals("s3", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(s3Bucket))
+        {
+            Console.Error.WriteLine("The --s3Bucket option (or QUANTA_CANDLE_S3_BUCKET env var) is required when --sink s3 is used.");
+            return 2;
+        }
 
         using CancellationTokenSource stopCts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
@@ -103,6 +111,12 @@ public static class CollectTradesCommand
                 {
                     services.AddSingleton(new TradeSinkFileSimpleOptions(outputDir));
                     services.AddSingleton<ITradeSink, TradeSinkFileSimple>();
+                }
+                else if (sink.Equals("s3", StringComparison.OrdinalIgnoreCase))
+                {
+                    services.AddSingleton(new TradeSinkS3SimpleOptions(s3Bucket, s3Prefix));
+                    services.AddSingleton<IS3ObjectUploader, AwsSdkS3ObjectUploader>();
+                    services.AddSingleton<ITradeSink, TradeSinkS3Simple>();
                 }
                 else
                 {
@@ -273,12 +287,32 @@ public static class CollectTradesCommand
         return defaultValue;
     }
 
+    private static string GetStringOptionOrEnvironment(IReadOnlyDictionary<string, string> options, string optionName, params string[] environmentVariableNames)
+    {
+        if (options.TryGetValue(optionName, out string? optionValue) && !string.IsNullOrWhiteSpace(optionValue))
+        {
+            return optionValue;
+        }
+
+        foreach (string environmentVariableName in environmentVariableNames)
+        {
+            string? environmentValue = Environment.GetEnvironmentVariable(environmentVariableName);
+            if (!string.IsNullOrWhiteSpace(environmentValue))
+            {
+                return environmentValue;
+            }
+        }
+
+        return string.Empty;
+    }
+
     private static void PrintHelp()
     {
         Console.WriteLine("QuantaCandle.CLI");
         Console.WriteLine();
         Console.WriteLine("Commands:");
-        Console.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT --duration 10m [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file] [--outDir trades-out]");
+        Console.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT --duration 10m [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file|s3] [--outDir trades-out]");
+        Console.WriteLine("    S3 sink options: --s3Bucket my-bucket [--s3Prefix trades/raw] (env: QUANTA_CANDLE_S3_BUCKET, QUANTA_CANDLE_S3_PREFIX)");
         Console.WriteLine("    Binance options: [--binanceWsBase wss://stream.binance.com:9443] (try wss://stream.binance.us:9443 in the US)");
     }
 }

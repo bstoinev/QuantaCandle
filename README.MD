@@ -31,7 +31,7 @@ QuantaCandle aims to:
 - Docker / Docker Compose
 - Linux-first runtime
 - GitHub Actions (CI)
-- AWS EC2 (deployment target)
+- AWS ECS/Fargate (deployment target)
 
 ## Developer Setup
 
@@ -106,43 +106,16 @@ Get-Content $firstCandleFile.FullName | Select-Object -First 20
 
 Use `wss://stream.binance.com:9443` instead of `wss://stream.binance.us:9443` if you are outside the US.
 
-## AWS Scheduled Fargate Foundation
+## AWS Deployment (Manual Infra)
 
-The repo includes Terraform infrastructure for running Quanta Candle as a scheduled ECS Fargate task with persistent EFS storage.
+Terraform is retired for this project. AWS infrastructure is managed manually in AWS.
 
-Path: `infra/aws/terraform`
+Runtime deployment flow:
+1. Push code to GitHub.
+2. GitHub Actions builds and pushes the container image to the existing ECR repository (`.github/workflows/container-ecr.yml`).
+3. In the AWS ECS web console, force a new deployment on the existing Quanta Candle service when rollout is needed.
 
-Provisioned resources:
-- Amazon ECR repository for the QuantaCandle image
-- Amazon ECS cluster and Fargate task definition
-- Amazon EFS file system and mount targets
-- EventBridge Scheduler schedule to invoke ECS `RunTask`
-- IAM roles/policies scoped to task execution and scheduler task launch
-
-The scheduled task runs the existing CLI entrypoint with explicit args equivalent to:
-
-```text
-collect-trades --source <source> --instrument <instrument> --duration <duration> --sink file --outDir <output_dir>
-```
-
-(`--binanceWsBase` is appended only when `binance_ws_base` is set.)
-
-Quick start:
-
-```bash
-cd infra/aws/terraform
-cp terraform.tfvars.example terraform.tfvars
-terraform init
-terraform plan
-terraform apply
-```
-
-Configure schedule and collection behavior with Terraform variables:
-- `schedule_expression`, `schedule_timezone`
-- `source`, `instrument`, `duration`, `output_dir`
-- `image_tag`, `binance_ws_base`
-
-Use an EFS-backed output directory such as `/data/trades-out` so collected files persist between scheduled runs.
+The ECS task runtime remains S3-based for trade collection output (`--sink s3` with bucket/prefix configured in the task definition/runtime settings).
 
 ## CI: Build and publish to GHCR
 

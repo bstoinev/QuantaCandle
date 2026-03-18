@@ -10,5 +10,9 @@
     <ProjectReference Include="..\QuantaCandle.Core\QuantaCandle.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" Version="4.0.19" />
+  </ItemGroup>
+
 </Project>
 

@@ -35,6 +35,8 @@ static void PrintHelp()
     Console.WriteLine("QuantaCandle.CLI");
     Console.WriteLine();
     Console.WriteLine("Commands:");
-    Console.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT --duration 10m [--sink null|file] [--outDir trades-out]");
+    Console.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT --duration 10m [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file|s3] [--outDir trades-out]");
+    Console.WriteLine("    S3 sink options: --s3Bucket my-bucket [--s3Prefix trades/raw] (env: QUANTA_CANDLE_S3_BUCKET, QUANTA_CANDLE_S3_PREFIX)");
+    Console.WriteLine("    Binance options: [--binanceWsBase wss://stream.binance.com:9443] (try wss://stream.binance.us:9443 in the US)");
     Console.WriteLine("  generate-candles --source binance --timeframe 1m [--format csv|jsonl] [--inDir trades-out] [--outDir candles-out]");
 }
