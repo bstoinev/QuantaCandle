@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="Moq" Version="4.20.70" />
   </ItemGroup>
 
   <ItemGroup>
@@ -19,10 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\QuantaCandle.CLI\QuantaCandle.CLI.csproj" />
-    <ProjectReference Include="..\..\src\QuantaCandle.Service\QuantaCandle.Service.csproj" />
-    <ProjectReference Include="..\..\src\QuantaCandle.Service.Stubs\QuantaCandle.Service.Stubs.csproj" />
-    <ProjectReference Include="..\..\src\QuantaCandle.Exchange.Binance\QuantaCandle.Exchange.Binance.csproj" />
+    <ProjectReference Include="..\QuantaCandle.Infra\QuantaCandle.Infra.csproj" />
   </ItemGroup>
 
 </Project>

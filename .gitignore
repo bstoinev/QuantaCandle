@@ -1,6 +1,4 @@
-# Build results
-bin/
-obj/
+.vs
 
 # User-specific files
 *.user
@@ -20,6 +18,8 @@ obj/
 
 # Logs
 *.log
+
+build-output
 
 # OS files
 .DS_Store
@@ -62,5 +62,7 @@ tmp-trades-out*/*
 # Google Drive sync folders
 .tmp.drivedownload
 .tmp.driveupload
+
+# Test output
 tmp-e2e/candles/binance/1m/BTC-USDT/2026-03-16.csv
 tmp-e2e/trades/BTC-USDT/2026-03-16.jsonl

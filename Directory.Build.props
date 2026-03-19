@@ -1,9 +1,0 @@
-<Project>
-  <PropertyGroup>
-    <QuantaCandleBuildRoot Condition="'$(QuantaCandleBuildRoot)' == ''">$(MSBuildThisFileDirectory)build-output/</QuantaCandleBuildRoot>
-
-    <BaseOutputPath>$(QuantaCandleBuildRoot)bin/$(MSBuildProjectName)/</BaseOutputPath>
-    <BaseIntermediateOutputPath>$(QuantaCandleBuildRoot)obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
-    <MSBuildProjectExtensionsPath>$(QuantaCandleBuildRoot)obj/$(MSBuildProjectName)/</MSBuildProjectExtensionsPath>
-  </PropertyGroup>
-</Project>
