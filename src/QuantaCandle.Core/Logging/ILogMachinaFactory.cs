@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-
 namespace QuantaCandle.Core.Logging;
 
 public interface ILogMachinaFactory

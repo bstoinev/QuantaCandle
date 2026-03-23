@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Service.Options;
 
@@ -6,23 +7,23 @@ namespace QuantaCandle.Service.Pipeline;
 
 public sealed class InMemoryTradeDeduplicator : ITradeDeduplicator
 {
-    private readonly int capacityPerInstrument;
-    private readonly ConcurrentDictionary<Instrument, RecentKeyCache> caches;
+    private readonly int _capacityPerInstrument;
+    private readonly ConcurrentDictionary<Instrument, RecentKeyCache> _caches;
 
     public InMemoryTradeDeduplicator(CollectorOptions options)
     {
-        capacityPerInstrument = Math.Max(1, options.DeduplicationCapacity);
-        caches = new ConcurrentDictionary<Instrument, RecentKeyCache>();
+        _capacityPerInstrument = Math.Max(1, options.DeduplicationCapacity);
+        _caches = new ConcurrentDictionary<Instrument, RecentKeyCache>();
 
         foreach (Instrument instrument in options.Instruments)
         {
-            caches.TryAdd(instrument, new RecentKeyCache(capacityPerInstrument));
+            _caches.TryAdd(instrument, new RecentKeyCache(_capacityPerInstrument));
         }
     }
 
     public bool TryAccept(TradeKey key)
     {
-        RecentKeyCache cache = caches.GetOrAdd(key.Symbol, _ => new RecentKeyCache(capacityPerInstrument));
+        RecentKeyCache cache = _caches.GetOrAdd(key.Symbol, _ => new RecentKeyCache(_capacityPerInstrument));
         return cache.TryAdd(key);
     }
 
@@ -45,15 +46,11 @@ public sealed class InMemoryTradeDeduplicator : ITradeDeduplicator
 
         public bool TryAdd(TradeKey key)
         {
-            bool accepted;
-
             lock (gate)
             {
-                if (set.Contains(key))
-                {
-                    accepted = false;
-                }
-                else
+                var exists = set.Contains(key);
+
+                if (!exists)
                 {
                     if (count == ring.Length)
                     {
@@ -65,19 +62,16 @@ public sealed class InMemoryTradeDeduplicator : ITradeDeduplicator
                         count++;
                     }
 
-                    ring[nextIndex] = key;
+                    ring[nextIndex++] = key;
                     set.Add(key);
-                    nextIndex++;
                     if (nextIndex == ring.Length)
                     {
                         nextIndex = 0;
                     }
-
-                    accepted = true;
                 }
-            }
 
-            return accepted;
+                return !exists;
+            }
         }
     }
 }

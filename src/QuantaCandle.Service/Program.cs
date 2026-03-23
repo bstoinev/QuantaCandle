@@ -2,11 +2,11 @@ using Microsoft.Extensions.Hosting;
 using QuantaCandle.Core.Logging;
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
-using QuantaCandle.Service.Logging;
 using QuantaCandle.Service.Options;
 using QuantaCandle.Service.Pipeline;
 using QuantaCandle.Service.Stubs;
 using QuantaCandle.Service.Time;
+using QuantaCandle.Infra.Logging;
 
 namespace QuantaCandle.Service;
 
@@ -21,15 +21,15 @@ public class Program
         Host.CreateDefaultBuilder(args)
             .ConfigureServices(services =>
             {
-                services.AddSingleton<ILogMachinaFactory, HostLogMachinaFactory>();
-                services.AddSingleton(typeof(ILogMachina<>), typeof(HostLogMachina<>));
+                services.AddSingleton<ILogMachinaFactory, NLogLogMachinaFactory>();
+                services.AddSingleton(typeof(ILogMachina<>), typeof(NLogLogMachina<>));
 
                 services.AddSingleton<IClock, SystemClock>();
 
                 services.AddSingleton<TradePipelineStats>();
 
                 services.AddSingleton(new CollectorOptions(
-                    Instruments: new[] { Instrument.Parse("BTC-USDT") },
+                    Instruments: [Instrument.Parse("BTC-USDT")],
                     ChannelCapacity: 10_000,
                     BatchSize: 500,
                     FlushInterval: TimeSpan.FromSeconds(1)));

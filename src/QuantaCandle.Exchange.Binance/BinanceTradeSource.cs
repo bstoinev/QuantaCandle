@@ -5,7 +5,6 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
-using Microsoft.Extensions.Logging;
 using QuantaCandle.Core.Logging;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Exchange.Binance.Dtos;
@@ -20,12 +19,12 @@ public sealed class BinanceTradeSource : ITradeSource
     private static readonly ExchangeId BinanceExchange = new ExchangeId("Binance");
 
     private readonly BinanceTradeSourceOptions options;
-    private readonly ILogMachina<BinanceTradeSource> logMachina;
+    private readonly ILogMachina<BinanceTradeSource> _log;
 
-    public BinanceTradeSource(BinanceTradeSourceOptions options, ILogMachinaFactory logMachinaFactory)
+    public BinanceTradeSource(BinanceTradeSourceOptions options, ILogMachina<BinanceTradeSource> log)
     {
         this.options = options;
-        logMachina = logMachinaFactory.Create<BinanceTradeSource>();
+        _log = log;
     }
 
     public ExchangeId Exchange
@@ -36,12 +35,8 @@ public sealed class BinanceTradeSource : ITradeSource
         }
     }
 
-    public async IAsyncEnumerable<TradeInfo> GetLiveTradesAsync(
-        Instrument symbol,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+    public async IAsyncEnumerable<TradeInfo> GetLiveTradesAsync(Instrument symbol, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var logger = logMachina.GetLogger();
-
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -67,7 +62,8 @@ public sealed class BinanceTradeSource : ITradeSource
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Binance trade producer ended with error for {symbol}.", symbol);
+                _log.Error(ex);
+                _log.Warn($"Binance trade producer ended with error for {symbol}.");
             }
         }
     }
@@ -93,7 +89,6 @@ public sealed class BinanceTradeSource : ITradeSource
         Instrument instrument,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var logger = logMachina.GetLogger();
         bool loggedFirstMessage = false;
         bool loggedFirstParseFailure = false;
 
@@ -117,7 +112,7 @@ public sealed class BinanceTradeSource : ITradeSource
                 {
                     loggedFirstMessage = true;
                     string snippet = json.Length > 300 ? json.Substring(0, 300) : json;
-                    logger.LogInformation("First Binance message for {instrument}: {snippet}", instrument, snippet);
+                    _log.Info($"First Binance message for {instrument}: {snippet}");
                 }
 
                 BinanceTradeMessageDto? dto = TryDeserializeTrade(json, out Exception? error);
@@ -126,8 +121,8 @@ public sealed class BinanceTradeSource : ITradeSource
                     if (!loggedFirstParseFailure)
                     {
                         loggedFirstParseFailure = true;
-                        string snippet = json.Length > 300 ? json.Substring(0, 300) : json;
-                        logger.LogWarning(error, "Failed to parse Binance trade message for {instrument}: {snippet}", instrument, snippet);
+                        string snippet = json.Length > 300 ? $"{json.Substring(0, 300)}..." : json;
+                        _log.Warn($"Failed to parse Binance trade message for {instrument}: {snippet}");
                     }
 
                     continue;
@@ -152,8 +147,8 @@ public sealed class BinanceTradeSource : ITradeSource
             {
                 if (json.Contains("\"data\"", StringComparison.Ordinal))
                 {
-                    BinanceCombinedStreamEnvelopeDto<BinanceTradeMessageDto>? envelope =
-                        JsonSerializer.Deserialize<BinanceCombinedStreamEnvelopeDto<BinanceTradeMessageDto>>(json, JsonOptions);
+                    BinanceCombinedStreamEnvelopeDto<BinanceTradeMessageDto>? envelope = JsonSerializer
+                        .Deserialize<BinanceCombinedStreamEnvelopeDto<BinanceTradeMessageDto>>(json, JsonOptions);
                     return envelope?.Data;
                 }
 
@@ -211,7 +206,6 @@ public sealed class BinanceTradeSource : ITradeSource
 
     private async Task ProduceTradesAsync(Instrument instrument, ChannelWriter<TradeInfo> writer, CancellationToken cancellationToken)
     {
-        var logger = logMachina.GetLogger();
         TimeSpan delay = options.InitialReconnectDelay;
 
         try
@@ -226,9 +220,9 @@ public sealed class BinanceTradeSource : ITradeSource
 
                 try
                 {
-                    logger.LogInformation("Connecting to Binance trade stream: {uri}", uri);
+                    _log.Info($"Connecting to Binance trade stream: {uri}");
                     await ws.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
-                    logger.LogInformation("Connected to Binance trade stream: {uri}", uri);
+                    _log.Info($"Connected to Binance trade stream: {uri}");
 
                     delay = options.InitialReconnectDelay;
 
@@ -243,7 +237,7 @@ public sealed class BinanceTradeSource : ITradeSource
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning(ex, "Binance trade stream error for {instrument}; reconnecting in {delay}.", instrument, delay);
+                    _log.Warn($"Binance {instrument} stream error: {ex}. Attempting reconnect in {delay}");
                     await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                     delay = ExponentialBackoff.NextDelay(delay, options.MaxReconnectDelay);
                 }

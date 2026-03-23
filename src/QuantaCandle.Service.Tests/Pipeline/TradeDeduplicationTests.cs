@@ -1,7 +1,5 @@
-using System;
-using System.Threading;
 using System.Threading.Channels;
-using System.Threading.Tasks;
+
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Service.Options;
 using QuantaCandle.Service.Pipeline;
@@ -11,6 +9,8 @@ namespace QuantaCandle.Service.Tests.Pipeline;
 
 public sealed class TradeDeduplicationTests
 {
+    private readonly TestLogMachinaFactory _logFactory = new();
+
     [Fact]
     public async Task Drops_duplicate_trades_with_same_TradeKey()
     {
@@ -26,7 +26,7 @@ public sealed class TradeDeduplicationTests
             DeduplicationCapacity: 100);
 
         InMemoryTradeDeduplicator deduplicator = new InMemoryTradeDeduplicator(options);
-        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, new TestLogMachinaFactory());
+        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
         Task run = worker.RunAsync(channel.Reader, options, CancellationToken.None);
@@ -66,7 +66,7 @@ public sealed class TradeDeduplicationTests
             DeduplicationCapacity: 100);
 
         InMemoryTradeDeduplicator deduplicator = new InMemoryTradeDeduplicator(options);
-        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, new TestLogMachinaFactory());
+        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
         Task run = worker.RunAsync(channel.Reader, options, CancellationToken.None);
@@ -131,7 +131,7 @@ public sealed class TradeDeduplicationTests
             DeduplicationCapacity: 100);
 
         InMemoryTradeDeduplicator deduplicator = new InMemoryTradeDeduplicator(options);
-        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, new TestLogMachinaFactory());
+        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
         Task run = worker.RunAsync(channel.Reader, options, CancellationToken.None);

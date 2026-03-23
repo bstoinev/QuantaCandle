@@ -1,19 +1,12 @@
 ﻿using Microsoft.Extensions.Logging;
+
 using QuantaCandle.Core.Logging;
 
 namespace QuantaCandle.Infra.Logging;
 
-public class NLogLogMachinaFactory : ILogMachinaFactory
+public class NLogLogMachinaFactory(ILoggerFactory loggerFactory) : ILogMachinaFactory
 {
-    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILoggerFactory _loggerFactory = loggerFactory;
 
-    public NLogLogMachinaFactory(ILoggerFactory loggerFactory)
-    {
-        _loggerFactory = loggerFactory;
-    }
-
-    public ILogMachina<T> Create<T>() where T : class
-    {
-        return new NLogLogMachina<T>(_loggerFactory);
-    }
+    public ILogMachina<T> Create<T>() where T : class => new NLogLogMachina<T>();
 }

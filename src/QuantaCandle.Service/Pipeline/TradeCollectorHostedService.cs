@@ -1,9 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Channels;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Hosting;
 using QuantaCandle.Core.Logging;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Service.Options;
@@ -12,44 +7,42 @@ namespace QuantaCandle.Service.Pipeline;
 
 public sealed class TradeCollectorHostedService : BackgroundService
 {
-    private readonly CollectorOptions options;
-    private readonly RetryOptions retryOptions;
-    private readonly ITradeSource tradeSource;
-    private readonly TradeIngestWorker ingestWorker;
-    private readonly ILogMachina<TradeCollectorHostedService> logMachina;
+    private readonly CollectorOptions _options;
+    private readonly RetryOptions _retryOptions;
+    private readonly ITradeSource _tradeSource;
+    private readonly TradeIngestWorker _ingestWorker;
+    private readonly ILogMachina<TradeCollectorHostedService> _log;
 
     public TradeCollectorHostedService(
         CollectorOptions options,
         RetryOptions retryOptions,
         ITradeSource tradeSource,
         TradeIngestWorker ingestWorker,
-        ILogMachinaFactory logMachinaFactory)
+        ILogMachina<TradeCollectorHostedService> log)
     {
-        this.options = options;
-        this.retryOptions = retryOptions;
-        this.tradeSource = tradeSource;
-        this.ingestWorker = ingestWorker;
-        logMachina = logMachinaFactory.Create<TradeCollectorHostedService>();
+        _options = options;
+        _retryOptions = retryOptions;
+        _tradeSource = tradeSource;
+        _ingestWorker = ingestWorker;
+        _log = log;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var logger = logMachina.GetLogger();
-
         using CancellationTokenSource collectorCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         CancellationToken collectorToken = collectorCts.Token;
 
-        List<Task> collectors = new List<Task>(options.Instruments.Count);
-        List<Channel<TradeInfo>> channels = new List<Channel<TradeInfo>>(options.Instruments.Count);
-        List<Task> ingests = new List<Task>(options.Instruments.Count);
+        List<Task> collectors = new List<Task>(_options.Instruments.Count);
+        List<Channel<TradeInfo>> channels = new List<Channel<TradeInfo>>(_options.Instruments.Count);
+        List<Task> ingests = new List<Task>(_options.Instruments.Count);
 
-        foreach (Instrument instrument in options.Instruments)
+        foreach (Instrument instrument in _options.Instruments)
         {
-            Channel<TradeInfo> channel = BoundedChannelFactory.CreateTradeChannel(options.ChannelCapacity);
+            Channel<TradeInfo> channel = BoundedChannelFactory.CreateTradeChannel(_options.ChannelCapacity);
             channels.Add(channel);
 
             collectors.Add(CollectInstrumentAsync(instrument, channel.Writer, collectorToken));
-            ingests.Add(ingestWorker.RunAsync(channel.Reader, options, stoppingToken));
+            ingests.Add(_ingestWorker.RunAsync(channel.Reader, _options, stoppingToken));
         }
 
         try
@@ -70,7 +63,7 @@ public sealed class TradeCollectorHostedService : BackgroundService
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Collector task failed during shutdown.");
+            _log.Warn($"Collector task failed during shutdown with the following exception: {ex}");
         }
         finally
         {
@@ -86,20 +79,19 @@ public sealed class TradeCollectorHostedService : BackgroundService
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Ingest worker failed during shutdown.");
+            _log.Warn($"Ingest worker failed during shutdown with the following exception: {ex}");
         }
     }
 
     private async Task CollectInstrumentAsync(Instrument instrument, ChannelWriter<TradeInfo> writer, CancellationToken stoppingToken)
     {
-        var logger = logMachina.GetLogger();
-        TimeSpan delay = retryOptions.InitialDelay;
+        TimeSpan delay = _retryOptions.InitialDelay;
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await foreach (TradeInfo trade in tradeSource.GetLiveTradesAsync(instrument, stoppingToken))
+                await foreach (TradeInfo trade in _tradeSource.GetLiveTradesAsync(instrument, stoppingToken))
                 {
                     await writer.WriteAsync(trade, stoppingToken).ConfigureAwait(false);
                 }
@@ -112,10 +104,10 @@ public sealed class TradeCollectorHostedService : BackgroundService
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Trade source failed for {instrument}; retrying in {delay}.", instrument, delay);
+                _log.Warn($"Trade source failed for {instrument}; retrying in {delay} with the following exception: {ex}");
                 await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
 
-                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, retryOptions.MaxDelay.TotalMilliseconds));
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, _retryOptions.MaxDelay.TotalMilliseconds));
             }
         }
     }

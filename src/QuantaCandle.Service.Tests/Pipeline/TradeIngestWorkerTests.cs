@@ -11,6 +11,8 @@ namespace QuantaCandle.Service.Tests.Pipeline;
 
 public sealed class TradeIngestWorkerTests
 {
+    private readonly TestLogMachinaFactory _logFactory = new();
+
     [Fact]
     public async Task Flushes_when_batch_size_is_reached()
     {
@@ -25,7 +27,7 @@ public sealed class TradeIngestWorkerTests
             FlushInterval: TimeSpan.FromHours(1));
 
         InMemoryTradeDeduplicator deduplicator = new InMemoryTradeDeduplicator(options);
-        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, new TestLogMachinaFactory());
+        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
 
@@ -62,7 +64,7 @@ public sealed class TradeIngestWorkerTests
             FlushInterval: TimeSpan.FromHours(1));
 
         InMemoryTradeDeduplicator deduplicator = new InMemoryTradeDeduplicator(options);
-        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, new TestLogMachinaFactory());
+        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
 

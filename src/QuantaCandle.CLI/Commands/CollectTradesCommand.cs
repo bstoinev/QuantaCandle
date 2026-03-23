@@ -1,16 +1,12 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using QuantaCandle.Core.Logging;
+
 using QuantaCandle.Core;
+using QuantaCandle.Core.Logging;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Exchange.Binance;
-using QuantaCandle.Service.Logging;
+using QuantaCandle.Infra.Logging;
 using QuantaCandle.Service.Options;
 using QuantaCandle.Service.Pipeline;
 using QuantaCandle.Service.Stubs;
@@ -76,8 +72,8 @@ public static class CollectTradesCommand
             })
             .ConfigureServices(services =>
             {
-                services.AddSingleton<ILogMachinaFactory, HostLogMachinaFactory>();
-                services.AddSingleton(typeof(ILogMachina<>), typeof(HostLogMachina<>));
+                services.AddSingleton<ILogMachinaFactory, NLogLogMachinaFactory>();
+                services.AddSingleton(typeof(ILogMachina<>), typeof(NLogLogMachina<>));
 
                 services.AddSingleton<IClock, SystemClock>();
                 services.AddSingleton<TradePipelineStats>();

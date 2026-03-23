@@ -15,25 +15,24 @@ public sealed class TradeIngestWorker
     private readonly IIngestionStateStore ingestionStateStore;
     private readonly ITradeDeduplicator deduplicator;
     private readonly TradePipelineStats stats;
-    private readonly ILogMachina<TradeIngestWorker> logMachina;
+    private readonly ILogMachina<TradeIngestWorker> _log;
 
     public TradeIngestWorker(
         ITradeSink tradeSink,
         IIngestionStateStore ingestionStateStore,
         ITradeDeduplicator deduplicator,
         TradePipelineStats stats,
-        ILogMachinaFactory logMachinaFactory)
+        ILogMachina<TradeIngestWorker> log)
     {
         this.tradeSink = tradeSink;
         this.ingestionStateStore = ingestionStateStore;
         this.deduplicator = deduplicator;
         this.stats = stats;
-        logMachina = logMachinaFactory.Create<TradeIngestWorker>();
+        _log = log;
     }
 
     public async Task RunAsync(ChannelReader<TradeInfo> reader, CollectorOptions options, CancellationToken stoppingToken)
     {
-        var logger = logMachina.GetLogger();
         List<TradeInfo> batch = new List<TradeInfo>(options.BatchSize);
         using PeriodicTimer timer = new PeriodicTimer(options.FlushInterval);
         Task<bool>? waitToReadTask = null;
@@ -83,7 +82,8 @@ public sealed class TradeIngestWorker
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Ingest worker crashed.");
+            _log.Error(ex);
+            _log.Warn("Ingest worker crashed.");
             throw;
         }
         finally
