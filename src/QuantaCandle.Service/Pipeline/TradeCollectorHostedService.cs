@@ -1,5 +1,5 @@
 using System.Threading.Channels;
-using QuantaCandle.Core.Logging;
+using LogMachina;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Service.Options;
 

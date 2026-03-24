@@ -1,12 +1,12 @@
-using Microsoft.Extensions.Hosting;
-using QuantaCandle.Core.Logging;
+using LogMachina;
+using LogMachina.DependencyInjection;
+
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Service.Options;
 using QuantaCandle.Service.Pipeline;
 using QuantaCandle.Service.Stubs;
 using QuantaCandle.Service.Time;
-using QuantaCandle.Infra.Logging;
 
 namespace QuantaCandle.Service;
 
@@ -21,8 +21,7 @@ public class Program
         Host.CreateDefaultBuilder(args)
             .ConfigureServices(services =>
             {
-                services.AddSingleton<ILogMachinaFactory, NLogLogMachinaFactory>();
-                services.AddSingleton(typeof(ILogMachina<>), typeof(NLogLogMachina<>));
+                services.AddLogMachina();
 
                 services.AddSingleton<IClock, SystemClock>();
 

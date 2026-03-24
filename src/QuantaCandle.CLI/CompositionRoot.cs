@@ -1,8 +1,11 @@
-using SimpleInjector;
+using LogMachina;
+using LogMachina.NLog;
+
 using Microsoft.Extensions.Logging;
+
 using NLog.Extensions.Logging;
-using QuantaCandle.Core.Logging;
-using QuantaCandle.Infra.Logging;
+
+using SimpleInjector;
 
 namespace QuantaCandle.CLI;
 

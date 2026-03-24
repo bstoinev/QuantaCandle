@@ -1,7 +1,4 @@
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
-
-using QuantaCandle.Core.Logging;
+using LogMachina;
 
 namespace QuantaCandle.Service.Tests.TestDoubles;
 

@@ -5,7 +5,9 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
-using QuantaCandle.Core.Logging;
+
+using LogMachina;
+
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Exchange.Binance.Dtos;
 using QuantaCandle.Exchange.Binance.Internal;

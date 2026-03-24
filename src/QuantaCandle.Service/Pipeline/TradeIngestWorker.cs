@@ -1,9 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Channels;
-using System.Threading.Tasks;
-using QuantaCandle.Core.Logging;
+
+using LogMachina;
+
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Service.Options;
 
@@ -119,7 +117,7 @@ public sealed class TradeIngestWorker
         IReadOnlyList<TradeInfo> snapshot = batch.ToArray();
         batch.Clear();
 
-        TradeAppendResult appendResult = await tradeSink.AppendAsync(snapshot, cancellationToken).ConfigureAwait(false);
+        TradeAppendResult appendResult = await tradeSink.Append(snapshot, cancellationToken).ConfigureAwait(false);
         stats.OnBatchFlushed(appendResult.InsertedCount);
 
         Dictionary<(ExchangeId Exchange, Instrument Symbol), TradeWatermark> latestByInstrument = new Dictionary<(ExchangeId, Instrument), TradeWatermark>();
