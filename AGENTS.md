@@ -28,25 +28,27 @@ Example:
 Keep the response easy to validate from ChatGPT by always including those Repo Lens links.
 
 ## General rules
-* Prefer Windows environment. E.g., alway end a line with `\r\n` and use `\` as a path separator.Remember that you need to escape the '\' symbol in code like this '\\'.
+* Assume Windows environment. E.g., always end a line with `\r\n` and use `\` as a path separator.
+* Remember that you need to escape the '\' symbol in code like this '\\'.
 
 ## Naming rules
 * Never use underscore in method names, including test methods. Use descriptive PascalCase names instead. For example, use `CalculateTotalPrice()` instead of `Calculate_Total_Price()`.
 * Never add 'Async' suffix to method names, unless both synchronous and asynchronous versions of the method exist.
 
-## Programming rules
+## Coding rules
 
 * A source file may contain only one type declaration at its root. The only exception to this rule is when a file contains nested types.
 * Always describe the type purpose using XML comments, and if the type is complex, also describe its members.
 * Prefer file-name scoped namespaces and use them whenever possible.
-* In case both generic and non-generic version of a type exist, use the suffix "ClosedType" for the non-generic version file name.
+* In case both generic and non-generic version of a type exist, use the suffix "ClosedType" for the non-generic file name.
   For example, `RepositoryClosedType` for non-generic and `Repository<...>` for the generic type. But don't use the suffix in the actual type name, so the types should be named `Repository` and `Repository<T>`.
 * Design a method by following the Single Responsibility Principle, which states that a method should have only one reason to change.
 * Design a method flow so that it has only one `return` statement just before the closing bracket; multiple `throw` statements are allowed.
 * Prefer adding XML comments explaining the method flow, especially if the method is complex or has multiple steps.
     Exception to this rule is when the method is simple and has only one or two steps, such as a getter or a setter, or its name is self-explanatory, eg, `GetName()`.
 * When breaking a line, break before the an operator, such as `.`, `+`, `&&`, `||`, etc. This makes it easier to read and understand the code. But don't break lines shorter than least 120 characters.
-* Prefer `var` delarations.
+* Prefer `var` delarations instead of left-hand side type declaration.
+* When left-hand side type declaration is used, use the short `new()` statement on the right-hand side, instead of repeating the type name.
 
 ## Testing rules
 
