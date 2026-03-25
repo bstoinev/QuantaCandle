@@ -7,34 +7,20 @@ using QuantaCandle.Service.Options;
 
 namespace QuantaCandle.Service.Pipeline;
 
-public sealed class TradeIngestWorker
+public sealed class TradeIngestWorker(
+    ITradeSink tradeSink,
+    IIngestionStateStore ingestionStateStore,
+    ITradeDeduplicator deduplicator,
+    TradePipelineStats stats,
+    ILogMachina<TradeIngestWorker> log)
 {
-    private readonly ITradeSink tradeSink;
-    private readonly IIngestionStateStore ingestionStateStore;
-    private readonly ITradeDeduplicator deduplicator;
-    private readonly TradePipelineStats stats;
-    private readonly ILogMachina<TradeIngestWorker> _log;
-
-    public TradeIngestWorker(
-        ITradeSink tradeSink,
-        IIngestionStateStore ingestionStateStore,
-        ITradeDeduplicator deduplicator,
-        TradePipelineStats stats,
-        ILogMachina<TradeIngestWorker> log)
+    public async Task Run(ChannelReader<TradeInfo> reader, CollectorOptions options, CancellationToken stoppingToken)
     {
-        this.tradeSink = tradeSink;
-        this.ingestionStateStore = ingestionStateStore;
-        this.deduplicator = deduplicator;
-        this.stats = stats;
-        _log = log;
-    }
-
-    public async Task RunAsync(ChannelReader<TradeInfo> reader, CollectorOptions options, CancellationToken stoppingToken)
-    {
-        List<TradeInfo> batch = new List<TradeInfo>(options.BatchSize);
-        using PeriodicTimer timer = new PeriodicTimer(options.FlushInterval);
         Task<bool>? waitToReadTask = null;
-        Task<bool> tickTask = timer.WaitForNextTickAsync(stoppingToken).AsTask();
+
+        var batch = new List<TradeInfo>(options.BatchSize);
+        using var timer = new PeriodicTimer(options.FlushInterval);
+        var tickTask = timer.WaitForNextTickAsync(stoppingToken).AsTask();
 
         try
         {
@@ -45,33 +31,37 @@ public sealed class TradeIngestWorker
                 Task<bool> completed = await Task.WhenAny(waitToReadTask, tickTask).ConfigureAwait(false);
                 if (completed == tickTask)
                 {
-                    await FlushBatchAsync(batch, stoppingToken).ConfigureAwait(false);
+                    await FlushBatch(batch, stoppingToken).ConfigureAwait(false);
                     tickTask = timer.WaitForNextTickAsync(stoppingToken).AsTask();
                     continue;
                 }
 
                 bool canRead = await waitToReadTask.ConfigureAwait(false);
                 waitToReadTask = null;
-                if (!canRead)
+
+                if (canRead)
+                {
+                    while (reader.TryRead(out TradeInfo trade))
+                    {
+                        stats.OnTradeReceived(trade.Timestamp);
+
+                        if (deduplicator.TryAccept(trade.Key))
+                        {
+                            batch.Add(trade);
+                            if (batch.Count >= options.BatchSize)
+                            {
+                                await FlushBatch(batch, stoppingToken).ConfigureAwait(false);
+                            }
+                        }
+                        else
+                        {
+                            stats.OnDuplicateDropped();
+                        }
+                    }
+                }
+                else
                 {
                     break;
-                }
-
-                while (reader.TryRead(out TradeInfo trade))
-                {
-                    stats.OnTradeReceived(trade.Timestamp);
-
-                    if (!deduplicator.TryAccept(trade.Key))
-                    {
-                        stats.OnDuplicateDropped();
-                        continue;
-                    }
-
-                    batch.Add(trade);
-                    if (batch.Count >= options.BatchSize)
-                    {
-                        await FlushBatchAsync(batch, stoppingToken).ConfigureAwait(false);
-                    }
                 }
             }
         }
@@ -80,8 +70,8 @@ public sealed class TradeIngestWorker
         }
         catch (Exception ex)
         {
-            _log.Error(ex);
-            _log.Warn("Ingest worker crashed.");
+            log.Error(ex);
+            log.Warn("Ingest worker crashed.");
             throw;
         }
         finally
@@ -99,36 +89,35 @@ public sealed class TradeIngestWorker
                 batch.Add(trade);
                 if (batch.Count >= options.BatchSize)
                 {
-                    await FlushBatchAsync(batch, CancellationToken.None).ConfigureAwait(false);
+                    await FlushBatch(batch, CancellationToken.None).ConfigureAwait(false);
                 }
             }
 
-            await FlushBatchAsync(batch, CancellationToken.None).ConfigureAwait(false);
+            await FlushBatch(batch, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
-    private async Task FlushBatchAsync(List<TradeInfo> batch, CancellationToken cancellationToken)
+    private async Task FlushBatch(List<TradeInfo> batch, CancellationToken cancellationToken)
     {
-        if (batch.Count == 0)
+        if (batch.Count != 0)
         {
-            return;
-        }
+            var snapshot = batch.ToArray();
+            batch.Clear();
 
-        IReadOnlyList<TradeInfo> snapshot = batch.ToArray();
-        batch.Clear();
+            var appendResult = await tradeSink.Append(snapshot, cancellationToken).ConfigureAwait(false);
+            stats.OnBatchFlushed(appendResult.InsertedCount);
 
-        TradeAppendResult appendResult = await tradeSink.Append(snapshot, cancellationToken).ConfigureAwait(false);
-        stats.OnBatchFlushed(appendResult.InsertedCount);
+            var latestByInstrument = new Dictionary<(ExchangeId Exchange, Instrument Symbol), TradeWatermark>();
 
-        Dictionary<(ExchangeId Exchange, Instrument Symbol), TradeWatermark> latestByInstrument = new Dictionary<(ExchangeId, Instrument), TradeWatermark>();
-        foreach (TradeInfo trade in snapshot)
-        {
-            latestByInstrument[(trade.Key.Exchange, trade.Key.Symbol)] = new TradeWatermark(trade.Key.TradeId, trade.Timestamp);
-        }
+            foreach (TradeInfo trade in snapshot)
+            {
+                latestByInstrument[(trade.Key.Exchange, trade.Key.Symbol)] = new TradeWatermark(trade.Key.TradeId, trade.Timestamp);
+            }
 
-        foreach (KeyValuePair<(ExchangeId Exchange, Instrument Symbol), TradeWatermark> kvp in latestByInstrument)
-        {
-            await ingestionStateStore.SetWatermarkAsync(kvp.Key.Exchange, kvp.Key.Symbol, kvp.Value, cancellationToken).ConfigureAwait(false);
+            foreach (var kvp in latestByInstrument)
+            {
+                await ingestionStateStore.SetWatermarkAsync(kvp.Key.Exchange, kvp.Key.Symbol, kvp.Value, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 }

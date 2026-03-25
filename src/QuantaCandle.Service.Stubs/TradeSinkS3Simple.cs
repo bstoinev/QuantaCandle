@@ -30,7 +30,7 @@ public sealed class TradeSinkS3Simple : ITradeSink
         }
     }
 
-    public async ValueTask<TradeAppendResult> AppendAsync(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+    public async ValueTask<TradeAppendResult> Append(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
     {
         int insertedCount = trades.Count;
         if (insertedCount == 0)

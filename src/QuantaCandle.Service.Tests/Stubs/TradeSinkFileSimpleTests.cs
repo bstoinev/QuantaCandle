@@ -23,7 +23,7 @@ public sealed class TradeSinkFileSimpleTests
             TradeKey key = new TradeKey(new ExchangeId("Stub"), instrument, "123");
             TradeInfo trade = new TradeInfo(key, timestamp, price: 10m, quantity: 0.5m);
 
-            TradeAppendResult result = await sink.AppendAsync(new[] { trade }, CancellationToken.None);
+            TradeAppendResult result = await sink.Append(new[] { trade }, CancellationToken.None);
             Assert.Equal(1, result.InsertedCount);
 
             string expectedPath = Path.Combine(root, "BTC-USDT", "2026-03-12.jsonl");

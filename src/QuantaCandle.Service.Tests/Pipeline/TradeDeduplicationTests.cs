@@ -19,7 +19,7 @@ public sealed class TradeDeduplicationTests
         TradePipelineStats stats = new TradePipelineStats();
 
         CollectorOptions options = new CollectorOptions(
-            Instruments: new[] { Instrument.Parse("BTC-USDT") },
+            Instruments: ["BTC-USDT"],
             ChannelCapacity: 10,
             BatchSize: 10,
             FlushInterval: TimeSpan.FromHours(1),
@@ -29,7 +29,7 @@ public sealed class TradeDeduplicationTests
         TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
-        Task run = worker.RunAsync(channel.Reader, options, CancellationToken.None);
+        Task run = worker.Run(channel.Reader, options, CancellationToken.None);
 
         Instrument instrument = options.Instruments[0];
         DateTimeOffset t0 = new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero);
@@ -69,7 +69,7 @@ public sealed class TradeDeduplicationTests
         TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
-        Task run = worker.RunAsync(channel.Reader, options, CancellationToken.None);
+        Task run = worker.Run(channel.Reader, options, CancellationToken.None);
 
         Instrument instrument = options.Instruments[0];
         DateTimeOffset t0 = new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero);
@@ -134,7 +134,7 @@ public sealed class TradeDeduplicationTests
         TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
 
         Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
-        Task run = worker.RunAsync(channel.Reader, options, CancellationToken.None);
+        Task run = worker.Run(channel.Reader, options, CancellationToken.None);
 
         Instrument instrument = options.Instruments[0];
         DateTimeOffset t0 = new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero);

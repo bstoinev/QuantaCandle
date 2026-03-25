@@ -27,14 +27,14 @@ Example:
 
 Keep the response easy to validate from ChatGPT by always including those Repo Lens links.
 
-3. General rules
+## General rules
 * Prefer Windows environment. E.g., alway end a line with `\r\n` and use `\` as a path separator.Remember that you need to escape the '\' symbol in code like this '\\'.
 
-4. Naming rules
+## Naming rules
 * Never use underscore in method names, including test methods. Use descriptive PascalCase names instead. For example, use `CalculateTotalPrice()` instead of `Calculate_Total_Price()`.
 * Never add 'Async' suffix to method names, unless both synchronous and asynchronous versions of the method exist.
 
-5. Programming rules
+## Programming rules
 
 * A source file may contain only one type declaration at its root. The only exception to this rule is when a file contains nested types.
 * Always describe the type purpose using XML comments, and if the type is complex, also describe its members.
@@ -48,5 +48,6 @@ Keep the response easy to validate from ChatGPT by always including those Repo L
 * When breaking a line, break before the an operator, such as `.`, `+`, `&&`, `||`, etc. This makes it easier to read and understand the code. But don't break lines shorter than least 120 characters.
 * Prefer `var` delarations.
 
-5. Logging with `ILogMachina<TSource>`
+## Testing rules
 
+Prefer Moq over test doubles, and test doubles over real dependencies.

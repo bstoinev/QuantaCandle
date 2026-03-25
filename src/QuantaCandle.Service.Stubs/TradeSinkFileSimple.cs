@@ -17,7 +17,7 @@ public sealed class TradeSinkFileSimple : ITradeSink
         this.options = options;
     }
 
-    public async ValueTask<TradeAppendResult> AppendAsync(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+    public async ValueTask<TradeAppendResult> Append(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
     {
         int insertedCount = trades.Count;
 

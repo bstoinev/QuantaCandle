@@ -42,7 +42,7 @@ public sealed class TradeCollectorHostedService : BackgroundService
             channels.Add(channel);
 
             collectors.Add(CollectInstrumentAsync(instrument, channel.Writer, collectorToken));
-            ingests.Add(_ingestWorker.RunAsync(channel.Reader, _options, stoppingToken));
+            ingests.Add(_ingestWorker.Run(channel.Reader, _options, stoppingToken));
         }
 
         try

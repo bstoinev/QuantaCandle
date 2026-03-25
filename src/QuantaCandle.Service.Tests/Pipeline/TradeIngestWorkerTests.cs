@@ -1,7 +1,5 @@
-using System;
-using System.Threading;
 using System.Threading.Channels;
-using System.Threading.Tasks;
+
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Service.Options;
 using QuantaCandle.Service.Pipeline;
@@ -13,37 +11,43 @@ public sealed class TradeIngestWorkerTests
 {
     private readonly TestLogMachinaFactory _logFactory = new();
 
-    [Fact]
-    public async Task Flushes_when_batch_size_is_reached()
+    private readonly RecordingTradeSink _sink = new();
+    private readonly NoOpIngestionStateStore _stateStore = new();
+    private readonly TradePipelineStats _stats = new();
+
+    private readonly CollectorOptions _options = new(
+        Instruments: ["BTC-USDT"],
+        ChannelCapacity: 10,
+        BatchSize: 3,
+        FlushInterval: TimeSpan.FromHours(1));
+
+    private readonly InMemoryTradeDeduplicator _deduplicator;
+    private readonly TradeIngestWorker _worker;
+
+    private readonly Channel<TradeInfo> _channel = Channel.CreateUnbounded<TradeInfo>();
+
+    public TradeIngestWorkerTests()
     {
-        RecordingTradeSink sink = new RecordingTradeSink();
-        NoOpIngestionStateStore stateStore = new NoOpIngestionStateStore();
-        TradePipelineStats stats = new TradePipelineStats();
+        _deduplicator = new InMemoryTradeDeduplicator(_options);
+        _worker = new TradeIngestWorker(_sink, _stateStore, _deduplicator, _stats, _logFactory.Create<TradeIngestWorker>());
+    }
 
-        CollectorOptions options = new CollectorOptions(
-            Instruments: new[] { Instrument.Parse("BTC-USDT") },
-            ChannelCapacity: 10,
-            BatchSize: 3,
-            FlushInterval: TimeSpan.FromHours(1));
+    [Fact]
+    public async Task FlushesWhenBatchSizeIsReached()
+    {
+        var test = _worker.Run(_channel.Reader, _options, CancellationToken.None);
 
-        InMemoryTradeDeduplicator deduplicator = new InMemoryTradeDeduplicator(options);
-        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
+        await _channel.Writer.WriteAsync(CreateTrade("0", _options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
+        await _channel.Writer.WriteAsync(CreateTrade("1", _options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)));
+        await _channel.Writer.WriteAsync(CreateTrade("2", _options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)));
 
-        Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
+        _channel.Writer.Complete();
+        await test;
 
-        Task run = worker.RunAsync(channel.Reader, options, CancellationToken.None);
+        Assert.Single(_sink.Appends);
+        Assert.Equal(3, _sink.Appends[0].Count);
 
-        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
-        await channel.Writer.WriteAsync(CreateTrade("1", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)));
-        await channel.Writer.WriteAsync(CreateTrade("2", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)));
-
-        channel.Writer.Complete();
-        await run;
-
-        Assert.Single(sink.Appends);
-        Assert.Equal(3, sink.Appends[0].Count);
-
-        TradePipelineStatsSnapshot snapshot = stats.GetSnapshot();
+        TradePipelineStatsSnapshot snapshot = _stats.GetSnapshot();
         Assert.Equal(3, snapshot.TradesReceived);
         Assert.Equal(3, snapshot.TradesWritten);
         Assert.Equal(0, snapshot.DuplicatesDropped);
@@ -51,35 +55,20 @@ public sealed class TradeIngestWorkerTests
     }
 
     [Fact]
-    public async Task Flushes_remaining_trades_on_shutdown()
+    public async Task FlushesRemainingTradesOnShutdown()
     {
-        RecordingTradeSink sink = new RecordingTradeSink();
-        NoOpIngestionStateStore stateStore = new NoOpIngestionStateStore();
-        TradePipelineStats stats = new TradePipelineStats();
+        var test = _worker.Run(_channel.Reader, _options, CancellationToken.None);
 
-        CollectorOptions options = new CollectorOptions(
-            Instruments: new[] { Instrument.Parse("BTC-USDT") },
-            ChannelCapacity: 10,
-            BatchSize: 10,
-            FlushInterval: TimeSpan.FromHours(1));
+        await _channel.Writer.WriteAsync(CreateTrade("0", _options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
+        await _channel.Writer.WriteAsync(CreateTrade("1", _options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)));
 
-        InMemoryTradeDeduplicator deduplicator = new InMemoryTradeDeduplicator(options);
-        TradeIngestWorker worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, _logFactory.Create<TradeIngestWorker>());
+        _channel.Writer.Complete();
+        await test;
 
-        Channel<TradeInfo> channel = Channel.CreateUnbounded<TradeInfo>();
+        Assert.Single(_sink.Appends);
+        Assert.Equal(2, _sink.Appends[0].Count);
 
-        Task run = worker.RunAsync(channel.Reader, options, CancellationToken.None);
-
-        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
-        await channel.Writer.WriteAsync(CreateTrade("1", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)));
-
-        channel.Writer.Complete();
-        await run;
-
-        Assert.Single(sink.Appends);
-        Assert.Equal(2, sink.Appends[0].Count);
-
-        TradePipelineStatsSnapshot snapshot = stats.GetSnapshot();
+        TradePipelineStatsSnapshot snapshot = _stats.GetSnapshot();
         Assert.Equal(2, snapshot.TradesReceived);
         Assert.Equal(2, snapshot.TradesWritten);
         Assert.Equal(0, snapshot.DuplicatesDropped);

@@ -24,7 +24,7 @@ public sealed class TradeSinkS3SimpleTests
 
         TradeInfo trade = CreateTrade(tradeId: "123", timestamp: new DateTimeOffset(2026, 3, 12, 13, 37, 0, TimeSpan.Zero), price: 10m);
 
-        TradeAppendResult result = await sink.AppendAsync(new[] { trade }, CancellationToken.None);
+        TradeAppendResult result = await sink.Append(new[] { trade }, CancellationToken.None);
 
         Assert.Equal(1, result.InsertedCount);
         Assert.Single(uploader.Uploads);
@@ -55,8 +55,8 @@ public sealed class TradeSinkS3SimpleTests
         TradeInfo earlyTrade = CreateTrade(tradeId: "1", timestamp: new DateTimeOffset(2026, 3, 12, 13, 37, 0, TimeSpan.Zero), price: 10m);
         TradeInfo lateTrade = CreateTrade(tradeId: "2", timestamp: new DateTimeOffset(2026, 3, 12, 13, 37, 1, TimeSpan.Zero), price: 11m);
 
-        await sink.AppendAsync(new[] { lateTrade, earlyTrade }, CancellationToken.None);
-        await sink.AppendAsync(new[] { lateTrade, earlyTrade }, CancellationToken.None);
+        await sink.Append(new[] { lateTrade, earlyTrade }, CancellationToken.None);
+        await sink.Append(new[] { lateTrade, earlyTrade }, CancellationToken.None);
 
         Assert.Equal(2, uploader.Uploads.Count);
         Assert.Equal(uploader.Uploads[0].ObjectKey, uploader.Uploads[1].ObjectKey);
