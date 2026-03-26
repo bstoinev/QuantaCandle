@@ -3,41 +3,42 @@ using LogMachina.SimpleInjector;
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Exchange.Binance;
-using QuantaCandle.Service.Options;
-using QuantaCandle.Service.Pipeline;
-using QuantaCandle.Service.Stubs;
-using QuantaCandle.Service.Time;
+using QuantaCandle.Infra.Options;
+using QuantaCandle.Infra.Pipeline;
+using QuantaCandle.Infra;
+using QuantaCandle.Infra.Time;
 
 using SimpleInjector;
-using SimpleInjector.Lifestyles;
 
 namespace QuantaCandle.CLI;
 
+/// <summary>
+/// Configures the collector runtime object graph in Simple Injector.
+/// </summary>
 public static class CompositionRoot
 {
-    public static Container ConfigureCollector(
+    /// <summary>
+    /// Registers the collector dependencies into the supplied container.
+    /// </summary>
+    public static void ConfigureCollector(
+        Container container,
         CollectorOptions collectorOptions,
         RetryOptions retryOptions,
         TradeSourceRegistration tradeSourceRegistration,
         TradeSinkRegistration tradeSinkRegistration)
     {
-        var result = new Container();
-        result.Options.DefaultScopedLifestyle = new AsyncScopedLifestyle();
+        container.AddLogMachina();
+        container.RegisterInstance(collectorOptions);
+        container.RegisterInstance(retryOptions);
 
-        result.AddLogMachina();
-        result.RegisterInstance(collectorOptions);
-        result.RegisterInstance(retryOptions);
+        container.RegisterSingleton<IClock, SystemClock>();
+        container.RegisterSingleton<TradePipelineStats>();
+        container.RegisterSingleton<ITradeDeduplicator, InMemoryTradeDeduplicator>();
 
-        result.RegisterSingleton<IClock, SystemClock>();
-        result.RegisterSingleton<TradePipelineStats>();
-        result.RegisterSingleton<ITradeDeduplicator, InMemoryTradeDeduplicator>();
+        RegisterTradeSource(container, tradeSourceRegistration);
+        RegisterTradeSink(container, tradeSinkRegistration);
 
-        RegisterTradeSource(result, tradeSourceRegistration);
-        RegisterTradeSink(result, tradeSinkRegistration);
-
-        result.RegisterSingleton<TradeIngestWorker>();
-
-        return result;
+        container.RegisterSingleton<TradeIngestWorker>();
     }
 
     private static void RegisterTradeSource(Container container, TradeSourceRegistration tradeSourceRegistration)

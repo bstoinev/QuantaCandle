@@ -6,9 +6,9 @@ using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.CLI;
 using QuantaCandle.Exchange.Binance;
-using QuantaCandle.Service.Options;
-using QuantaCandle.Service.Pipeline;
-using QuantaCandle.Service.Stubs;
+using QuantaCandle.Infra.Options;
+using QuantaCandle.Infra.Pipeline;
+using QuantaCandle.Infra;
 
 using SimpleInjector;
 
@@ -73,7 +73,7 @@ public static class CollectTradesCommand
             stopCts.Cancel();
         };
 
-        var container = CompositionRoot.ConfigureCollector(collectorOptions, retryOptions, tradeSourceRegistration, tradeSinkRegistration);
+        var container = new Container();
 
         using IHost host = Host.CreateDefaultBuilder()
             .ConfigureLogging(builder =>
@@ -93,6 +93,12 @@ public static class CollectTradesCommand
             .Build();
 
         host.UseSimpleInjector(container);
+        CompositionRoot.ConfigureCollector(
+            container,
+            collectorOptions,
+            retryOptions,
+            tradeSourceRegistration,
+            tradeSinkRegistration);
 
         container.Verify();
 

@@ -10,7 +10,6 @@
 
   <ItemGroup>
     <PackageReference Include="LogMachina.NLog" Version="1.0.2" />
-    <PackageReference Include="LogMachina.SimpleInjector" Version="1.0.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="SimpleInjector" Version="5.5.0" />
     <PackageReference Include="SimpleInjector.Integration.GenericHost" Version="5.5.0" />
@@ -19,8 +18,6 @@
   <ItemGroup>
     <ProjectReference Include="..\QuantaCandle.Infra\QuantaCandle.Infra.csproj" />
     <ProjectReference Include="..\QuantaCandle.Exchange.Binance\QuantaCandle.Exchange.Binance.csproj" />
-    <ProjectReference Include="..\QuantaCandle.Service\QuantaCandle.Service.csproj" />
-    <ProjectReference Include="..\QuantaCandle.Service.Stubs\QuantaCandle.Service.Stubs.csproj" />
   </ItemGroup>
 
 </Project>

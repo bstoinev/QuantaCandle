@@ -1,4 +1,4 @@
-using QuantaCandle.Service.Stubs;
+using QuantaCandle.Infra;
 
 namespace QuantaCandle.CLI.Commands;
 

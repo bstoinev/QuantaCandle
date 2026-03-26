@@ -1,5 +1,5 @@
 using QuantaCandle.Exchange.Binance;
-using QuantaCandle.Service.Stubs;
+using QuantaCandle.Infra;
 
 namespace QuantaCandle.CLI;
 
