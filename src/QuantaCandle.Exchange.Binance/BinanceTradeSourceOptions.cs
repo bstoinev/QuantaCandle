@@ -8,14 +8,11 @@ public sealed record BinanceTradeSourceOptions(
 {
     public static BinanceTradeSourceOptions Default
     {
-        get
-        {
-            return new BinanceTradeSourceOptions(
-                BaseWebSocketUrl: "wss://stream.binance.com:9443",
-                InitialReconnectDelay: TimeSpan.FromSeconds(1),
-                MaxReconnectDelay: TimeSpan.FromSeconds(30),
-                ReceiveBufferSize: 16 * 1024);
-        }
+        get => new BinanceTradeSourceOptions(
+              BaseWebSocketUrl: "wss://stream.binance.com:9443",
+              InitialReconnectDelay: TimeSpan.FromSeconds(1),
+              MaxReconnectDelay: TimeSpan.FromSeconds(30),
+              ReceiveBufferSize: 16 * 1024);
     }
 }
 

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,11 +9,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="LogMachina.DependencyInjection" Version="1.0.0" />
-    <PackageReference Include="LogMachina.NLog" Version="1.0.0" />
-    <PackageReference Include="SimpleInjector" Version="5.5.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
+    <PackageReference Include="LogMachina.NLog" Version="1.0.2" />
+    <PackageReference Include="LogMachina.SimpleInjector" Version="1.0.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="SimpleInjector" Version="5.5.0" />
+    <PackageReference Include="SimpleInjector.Integration.GenericHost" Version="5.5.0" />
   </ItemGroup>
 
   <ItemGroup>

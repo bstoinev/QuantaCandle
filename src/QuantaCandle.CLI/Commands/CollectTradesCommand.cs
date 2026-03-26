@@ -1,19 +1,22 @@
-using LogMachina.DependencyInjection;
-
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
+using QuantaCandle.CLI;
 using QuantaCandle.Exchange.Binance;
 using QuantaCandle.Service.Options;
 using QuantaCandle.Service.Pipeline;
 using QuantaCandle.Service.Stubs;
-using QuantaCandle.Service.Time;
+
+using SimpleInjector;
 
 namespace QuantaCandle.CLI.Commands;
 
+/// <summary>
+/// Executes the trade collection command.
+/// </summary>
 public static class CollectTradesCommand
 {
     public static async Task<int> RunAsync(string[] args)
@@ -24,28 +27,18 @@ public static class CollectTradesCommand
             return 0;
         }
 
-        string command = args[0];
+        var command = args[0];
+
         if (!command.Equals("collect-trades", StringComparison.OrdinalIgnoreCase) && !command.Equals("collect", StringComparison.OrdinalIgnoreCase))
         {
             PrintHelp();
             return 2;
         }
 
-        Dictionary<string, string> options = ParseOptions(args.Skip(1));
+        var options = ParseOptions(args.Skip(1));
 
-        TimeSpan duration = GetDurationOption(options, "duration", TimeSpan.FromMinutes(1));
-        int capacity = GetIntOption(options, "capacity", 10_000);
-        int batchSize = GetIntOption(options, "batchSize", 500);
-        TimeSpan flushInterval = GetDurationOption(options, "flushInterval", TimeSpan.FromSeconds(1));
-        int tradesPerSecond = GetIntOption(options, "rate", 10);
-        string sink = GetStringOption(options, "sink", "null");
-        string outputDir = GetStringOption(options, "outDir", "trades-out");
-        string s3Bucket = GetStringOptionOrEnvironment(options, "s3Bucket", "QUANTA_CANDLE_S3_BUCKET", "QUANTA_S3_BUCKET", "S3_BUCKET");
-        string s3Prefix = GetStringOptionOrEnvironment(options, "s3Prefix", "QUANTA_CANDLE_S3_PREFIX", "QUANTA_S3_PREFIX", "S3_PREFIX");
-        string source = GetStringOption(options, "source", "stub");
-        string binanceWsBase = GetStringOption(options, "binanceWsBase", BinanceTradeSourceOptions.Default.BaseWebSocketUrl);
-
-        IReadOnlyList<Instrument> instruments = GetInstruments(options);
+        var sink = GetStringOption(options, "sink", "null");
+        var s3Bucket = GetStringOptionOrEnvironment(options, "s3Bucket", "QUANTA_CANDLE_S3_BUCKET", "QUANTA_S3_BUCKET", "S3_BUCKET");
 
         if (sink.Equals("s3", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(s3Bucket))
         {
@@ -53,12 +46,34 @@ public static class CollectTradesCommand
             return 2;
         }
 
+        var duration = GetDurationOption(options, "duration", TimeSpan.FromMinutes(1));
+        var capacity = GetIntOption(options, "capacity", 10_000);
+        var batchSize = GetIntOption(options, "batchSize", 500);
+        var flushInterval = GetDurationOption(options, "flushInterval", TimeSpan.FromSeconds(1));
+        var tradesPerSecond = GetIntOption(options, "rate", 10);
+        var outputDir = GetStringOption(options, "outDir", "trades-out");
+        var s3Prefix = GetStringOptionOrEnvironment(options, "s3Prefix", "QUANTA_CANDLE_S3_PREFIX", "QUANTA_S3_PREFIX", "S3_PREFIX");
+        var source = GetStringOption(options, "source", "stub");
+        var binanceWsBase = GetStringOption(options, "binanceWsBase", BinanceTradeSourceOptions.Default.BaseWebSocketUrl);
+        var instruments = GetInstruments(options);
+        var collectorOptions = new CollectorOptions(
+            Instruments: instruments,
+            ChannelCapacity: capacity,
+            BatchSize: batchSize,
+            FlushInterval: flushInterval,
+            MaxTradesPerSecond: tradesPerSecond);
+        var retryOptions = new RetryOptions(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30));
+        var tradeSourceRegistration = CreateTradeSourceRegistration(source, binanceWsBase, tradesPerSecond);
+        var tradeSinkRegistration = CreateTradeSinkRegistration(sink, outputDir, s3Bucket, s3Prefix);
+
         using CancellationTokenSource stopCts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
             stopCts.Cancel();
         };
+
+        var container = CompositionRoot.ConfigureCollector(collectorOptions, retryOptions, tradeSourceRegistration, tradeSinkRegistration);
 
         using IHost host = Host.CreateDefaultBuilder()
             .ConfigureLogging(builder =>
@@ -72,57 +87,14 @@ public static class CollectTradesCommand
             })
             .ConfigureServices(services =>
             {
-                services.AddLogMachina();
-
-                services.AddSingleton<IClock, SystemClock>();
-                services.AddSingleton<TradePipelineStats>();
-                services.AddSingleton(new CollectorOptions(
-                    Instruments: instruments,
-                    ChannelCapacity: capacity,
-                    BatchSize: batchSize,
-                    FlushInterval: flushInterval,
-                    MaxTradesPerSecond: tradesPerSecond));
-                services.AddSingleton(new RetryOptions(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30)));
-                services.AddSingleton<ITradeDeduplicator, InMemoryTradeDeduplicator>();
-
-                if (source.Equals("binance", StringComparison.OrdinalIgnoreCase))
-                {
-                    services.AddSingleton(new BinanceTradeSourceOptions(
-                        BaseWebSocketUrl: binanceWsBase,
-                        InitialReconnectDelay: BinanceTradeSourceOptions.Default.InitialReconnectDelay,
-                        MaxReconnectDelay: BinanceTradeSourceOptions.Default.MaxReconnectDelay,
-                        ReceiveBufferSize: BinanceTradeSourceOptions.Default.ReceiveBufferSize));
-                    services.AddSingleton<ITradeSource, BinanceTradeSource>();
-                    services.AddSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
-                }
-                else
-                {
-                    services.AddSingleton(new TradeSourceStubOptions(new ExchangeId("Stub"), tradesPerSecond, 50_000m, 0.01m, 0.001m));
-                    services.AddSingleton<ITradeSource, TradeSourceStub>();
-                    services.AddSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
-                }
-
-                if (sink.Equals("file", StringComparison.OrdinalIgnoreCase))
-                {
-                    services.AddSingleton(new TradeSinkFileSimpleOptions(outputDir));
-                    services.AddSingleton<ITradeSink, TradeSinkFileSimple>();
-                }
-                else if (sink.Equals("s3", StringComparison.OrdinalIgnoreCase))
-                {
-                    services.AddSingleton(new TradeSinkS3SimpleOptions(s3Bucket, s3Prefix));
-                    services.AddSingleton<IS3ObjectUploader, AwsSdkS3ObjectUploader>();
-                    services.AddSingleton<ITradeSink, TradeSinkS3Simple>();
-                }
-                else
-                {
-                    services.AddSingleton<ITradeSink, TradeSinkNull>();
-                }
-
-                services.AddSingleton<TradeIngestWorker>();
-                services.AddHostedService<TradeCollectorHostedService>();
+                services.AddSimpleInjector(container, simpleInjector => simpleInjector.AddHostedService<TradeCollectorHostedService>());
             })
             .UseConsoleLifetime()
             .Build();
+
+        host.UseSimpleInjector(container);
+
+        container.Verify();
 
         await host.StartAsync(stopCts.Token).ConfigureAwait(false);
         stopCts.CancelAfter(duration);
@@ -139,15 +111,62 @@ public static class CollectTradesCommand
             await host.StopAsync(CancellationToken.None).ConfigureAwait(false);
         }
 
-        TradePipelineStatsSnapshot snapshot = host.Services.GetRequiredService<TradePipelineStats>().GetSnapshot();
+        var snapshot = container.GetInstance<TradePipelineStats>().GetSnapshot();
+
         Console.WriteLine($"Trades received: {snapshot.TradesReceived}");
         Console.WriteLine($"Trades written:  {snapshot.TradesWritten}");
         Console.WriteLine($"Duplicates dropped: {snapshot.DuplicatesDropped}");
         Console.WriteLine($"Batches flushed: {snapshot.BatchesFlushed}");
         Console.WriteLine($"Min timestamp:   {snapshot.MinTimestamp:O}");
         Console.WriteLine($"Max timestamp:   {snapshot.MaxTimestamp:O}");
+        Console.WriteLine();
+        Console.WriteLine("Trade collection completed successfully.");
 
         return 0;
+    }
+
+    private static TradeSourceRegistration CreateTradeSourceRegistration(string source, string binanceWsBase, int tradesPerSecond)
+    {
+        TradeSourceRegistration registration;
+
+        if (source.Equals("binance", StringComparison.OrdinalIgnoreCase))
+        {
+            registration = new TradeSourceRegistration(
+                new BinanceTradeSourceOptions(
+                    BaseWebSocketUrl: binanceWsBase,
+                    InitialReconnectDelay: BinanceTradeSourceOptions.Default.InitialReconnectDelay,
+                    MaxReconnectDelay: BinanceTradeSourceOptions.Default.MaxReconnectDelay,
+                    ReceiveBufferSize: BinanceTradeSourceOptions.Default.ReceiveBufferSize),
+                null);
+        }
+        else
+        {
+            registration = new TradeSourceRegistration(
+                null,
+                new TradeSourceStubOptions(new ExchangeId("Stub"), tradesPerSecond, 50_000m, 0.01m, 0.001m));
+        }
+
+        return registration;
+    }
+
+    private static TradeSinkRegistration CreateTradeSinkRegistration(string sink, string outputDir, string s3Bucket, string s3Prefix)
+    {
+        TradeSinkRegistration registration;
+
+        if (sink.Equals("file", StringComparison.OrdinalIgnoreCase))
+        {
+            registration = new TradeSinkRegistration(new TradeSinkFileSimpleOptions(outputDir), null);
+        }
+        else if (sink.Equals("s3", StringComparison.OrdinalIgnoreCase))
+        {
+            registration = new TradeSinkRegistration(null, new TradeSinkS3SimpleOptions(s3Bucket, s3Prefix));
+        }
+        else
+        {
+            registration = new TradeSinkRegistration(null, null);
+        }
+
+        return registration;
     }
 
     private static IReadOnlyList<Instrument> GetInstruments(IReadOnlyDictionary<string, string> options)

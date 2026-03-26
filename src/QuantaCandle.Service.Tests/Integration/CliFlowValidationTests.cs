@@ -12,7 +12,7 @@ namespace QuantaCandle.Service.Tests.Integration;
 public sealed class CliFlowValidationTests
 {
     [Fact]
-    public async Task Collect_then_generate_creates_candle_files_without_network_dependency()
+    public async Task CollectThenGenerateCreatesCandleFilesWithoutNetworkDependency()
     {
         string root = Path.Combine(Path.GetTempPath(), "QuantaCandle.Service.Tests", Guid.NewGuid().ToString("N"));
         string tradeDirectory = Path.Combine(root, "trades");
@@ -22,8 +22,8 @@ public sealed class CliFlowValidationTests
 
         try
         {
-            int collectExitCode = await CollectTradesCommand.RunAsync(new[]
-            {
+            int collectExitCode = await CollectTradesCommand.RunAsync(
+            [
                 "collect-trades",
                 "--source", "stub",
                 "--instrument", "BTCUSDT",
@@ -33,7 +33,7 @@ public sealed class CliFlowValidationTests
                 "--flushInterval", "100ms",
                 "--sink", "file",
                 "--outDir", tradeDirectory,
-            });
+            ]);
             Assert.Equal(0, collectExitCode);
 
             string[] tradeFiles = Directory.GetFiles(tradeDirectory, "*.jsonl", SearchOption.AllDirectories);
