@@ -48,7 +48,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: DOCKERFILE
           platforms: linux/amd64
           push: true
           tags: |
