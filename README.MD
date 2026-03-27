@@ -45,30 +45,24 @@ This enables mandatory file structure validation on every commit.
 
 See `GIT_HOOKS.md` for details, including GitHub Actions enforcement (recommended as the mandatory gate) and the `post-checkout` recovery hook.
 
-## Docker (CLI collector)
+## Executable usage
 
-Build:
+Record trades to a local directory:
 
-```bash
-docker build -t quantacandle .
-```
-
-Run (writes trade output to `/data` inside the container):
-
-```bash
-docker run --rm -v $(pwd)/trades-out:/data quantacandle collect-trades --source binance --instrument BTCUSDT --duration 30s --sink file --outDir /data
+```powershell
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binance --instrument BTCUSDT --duration 30s --sink file --outDir trades-out
 ```
 
 Generate deterministic 1-minute candles from collected trades (CSV default):
 
-```bash
-docker run --rm -v $(pwd)/trades-out:/trades -v $(pwd)/candles-out:/candles quantacandle generate-candles --source binance --timeframe 1m --inDir /trades --outDir /candles
+```powershell
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --inDir trades-out --outDir candles-out
 ```
 
 Generate candles as JSONL (optional):
 
-```bash
-docker run --rm -v $(pwd)/trades-out:/trades -v $(pwd)/candles-out:/candles quantacandle generate-candles --source binance --timeframe 1m --format jsonl --inDir /trades --outDir /candles
+```powershell
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --format jsonl --inDir trades-out --outDir candles-out
 ```
 
 Input format (trade files): `<inDir>/<INSTRUMENT>/<yyyy-MM-dd>.jsonl`
@@ -94,10 +88,10 @@ $tradeDir = Join-Path $root "trades"
 $candleDir = Join-Path $root "candles"
 New-Item -ItemType Directory -Force -Path $tradeDir,$candleDir | Out-Null
 
-dotnet run -c Release --project src\QuantaCandle.CLI -- collect-trades --source binance --instrument BTCUSDT --duration 30s --sink file --outDir $tradeDir --binanceWsBase wss://stream.binance.us:9443
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binance --instrument BTCUSDT --duration 30s --sink file --outDir $tradeDir --binanceWsBase wss://stream.binance.us:9443
 
-dotnet run -c Release --project src\QuantaCandle.CLI -- generate-candles --source binance --timeframe 1m --inDir $tradeDir --outDir $candleDir
-dotnet run -c Release --project src\QuantaCandle.CLI -- generate-candles --source binance --timeframe 1m --format jsonl --inDir $tradeDir --outDir $candleDir
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --inDir $tradeDir --outDir $candleDir
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --format jsonl --inDir $tradeDir --outDir $candleDir
 
 Get-ChildItem -Recurse $candleDir -Filter *.csv | Sort-Object FullName
 $firstCandleFile = Get-ChildItem -Recurse (Join-Path $candleDir "binance\1m\BTC-USDT") -Filter *.csv | Sort-Object FullName | Select-Object -First 1

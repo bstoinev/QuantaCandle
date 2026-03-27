@@ -1,13 +1,7 @@
-using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 
-namespace QuantaCandle.Infra;
+namespace QuantaCandle.Infra.Generation;
 
 public sealed class TradeToCandleGenerator
 {
@@ -15,22 +9,22 @@ public sealed class TradeToCandleGenerator
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        string source = NormalizeSource(options.Source);
-        string timeframe = NormalizeTimeframe(options.Timeframe);
-        string format = NormalizeFormat(options.Format);
-        string inputDirectory = Path.GetFullPath(options.InputDirectory);
-        string outputRootDirectory = GetOutputRootDirectory(options.OutputDirectory, source, timeframe);
+        var source = NormalizeSource(options.Source);
+        var timeframe = NormalizeTimeframe(options.Timeframe);
+        var format = NormalizeFormat(options.Format);
+        var inputDirectory = Path.GetFullPath(options.InputDirectory);
+        var outputRootDirectory = GetOutputRootDirectory(options.OutputDirectory, source, timeframe);
 
         if (PathsEqual(inputDirectory, outputRootDirectory))
         {
             throw new ArgumentException("Input and output directories must be different.");
         }
 
-        List<TradeRow> trades = await LoadTradesAsync(inputDirectory, source, cancellationToken).ConfigureAwait(false);
+        var trades = await LoadTradesAsync(inputDirectory, source, cancellationToken).ConfigureAwait(false);
         trades.Sort(TradeRowComparer.Instance);
 
-        int inputTradeCount = trades.Count;
-        List<TradeRow> uniqueTrades = DeduplicateTrades(trades, out int duplicatesDropped);
+        var inputTradeCount = trades.Count;
+        var uniqueTrades = DeduplicateTrades(trades, out int duplicatesDropped);
 
         ResetOutputDirectory(outputRootDirectory);
 
@@ -44,28 +38,28 @@ public sealed class TradeToCandleGenerator
                 OutputFileCount: 0);
         }
 
-        Dictionary<string, List<CandleRow>> candlesByPath = BuildCandlesByOutputPath(uniqueTrades, source, timeframe, format, outputRootDirectory);
-        string[] outputPaths = candlesByPath.Keys.OrderBy(path => path, StringComparer.Ordinal).ToArray();
+        var candlesByPath = BuildCandlesByOutputPath(uniqueTrades, source, timeframe, format, outputRootDirectory);
+        var outputPaths = candlesByPath.Keys.OrderBy(path => path, StringComparer.Ordinal).ToArray();
 
-        int candleCount = 0;
+        var candleCount = 0;
         foreach (string outputPath in outputPaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            string? directory = Path.GetDirectoryName(outputPath);
+            var directory = Path.GetDirectoryName(outputPath);
             if (!string.IsNullOrWhiteSpace(directory))
             {
                 Directory.CreateDirectory(directory);
             }
 
-            List<CandleRow> candles = candlesByPath[outputPath];
+            var candles = candlesByPath[outputPath];
             candleCount += candles.Count;
 
-            string[] lines = format.Equals("csv", StringComparison.Ordinal)
+            var lines = format.Equals("csv", StringComparison.Ordinal)
                 ? BuildCsvLines(candles)
                 : BuildJsonlLines(candles);
 
-            string payload = string.Join(Environment.NewLine, lines) + Environment.NewLine;
+            var payload = string.Join(Environment.NewLine, lines) + Environment.NewLine;
             await File.WriteAllTextAsync(outputPath, payload, cancellationToken).ConfigureAwait(false);
         }
 
@@ -108,14 +102,14 @@ public sealed class TradeToCandleGenerator
 
         for (int i = 0; i < candles.Count; i++)
         {
-            CandleRow candle = candles[i];
-            string openTimeUtc = candle.OpenTime.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
-            string open = candle.Open?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            string high = candle.High?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            string low = candle.Low?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            string close = candle.Close?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            string volume = candle.Volume.ToString(CultureInfo.InvariantCulture);
-            string tradeCount = candle.TradeCount.ToString(CultureInfo.InvariantCulture);
+            var candle = candles[i];
+            var openTimeUtc = candle.OpenTime.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+            var open = candle.Open?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            var high = candle.High?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            var low = candle.Low?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            var close = candle.Close?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            var volume = candle.Volume.ToString(CultureInfo.InvariantCulture);
+            var tradeCount = candle.TradeCount.ToString(CultureInfo.InvariantCulture);
 
             lines[i + 1] = $"{openTimeUtc},{candle.Instrument},{open},{high},{low},{close},{volume},{tradeCount}";
         }
@@ -125,8 +119,8 @@ public sealed class TradeToCandleGenerator
 
     private static bool PathsEqual(string left, string right)
     {
-        string normalizedLeft = Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        string normalizedRight = Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedLeft = Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedRight = Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         return string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -213,8 +207,8 @@ public sealed class TradeToCandleGenerator
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int lineNumber = 0;
-            await foreach (string line in File.ReadLinesAsync(file, cancellationToken).ConfigureAwait(false))
+            var lineNumber = 0;
+            await foreach (var line in File.ReadLinesAsync(file, cancellationToken).ConfigureAwait(false))
             {
                 lineNumber++;
 
@@ -223,7 +217,7 @@ public sealed class TradeToCandleGenerator
                     continue;
                 }
 
-                TradeRow row = ParseTradeRow(line, file, lineNumber);
+                var row = ParseTradeRow(line, file, lineNumber);
                 if (!row.Exchange.Equals(source, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
@@ -243,12 +237,12 @@ public sealed class TradeToCandleGenerator
             using JsonDocument doc = JsonDocument.Parse(line);
             JsonElement root = doc.RootElement;
 
-            string exchange = root.GetProperty("exchange").GetString() ?? string.Empty;
-            string instrument = root.GetProperty("instrument").GetString() ?? string.Empty;
-            string tradeId = root.GetProperty("tradeId").GetString() ?? string.Empty;
-            DateTimeOffset timestamp = root.GetProperty("timestamp").GetDateTimeOffset().ToUniversalTime();
-            decimal price = root.GetProperty("price").GetDecimal();
-            decimal quantity = root.GetProperty("quantity").GetDecimal();
+            var exchange = root.GetProperty("exchange").GetString() ?? string.Empty;
+            var instrument = root.GetProperty("instrument").GetString() ?? string.Empty;
+            var tradeId = root.GetProperty("tradeId").GetString() ?? string.Empty;
+            var timestamp = root.GetProperty("timestamp").GetDateTimeOffset().ToUniversalTime();
+            var price = root.GetProperty("price").GetDecimal();
+            var quantity = root.GetProperty("quantity").GetDecimal();
 
             if (string.IsNullOrWhiteSpace(exchange))
             {
@@ -285,8 +279,8 @@ public sealed class TradeToCandleGenerator
 
     private static List<TradeRow> DeduplicateTrades(List<TradeRow> sortedTrades, out int duplicatesDropped)
     {
-        HashSet<TradeIdentity> seen = new HashSet<TradeIdentity>();
-        List<TradeRow> uniqueTrades = new List<TradeRow>(sortedTrades.Count);
+        var seen = new HashSet<TradeIdentity>();
+        var uniqueTrades = new List<TradeRow>(sortedTrades.Count);
         duplicatesDropped = 0;
 
         foreach (TradeRow trade in sortedTrades)
@@ -312,14 +306,14 @@ public sealed class TradeToCandleGenerator
         string format,
         string outputRootDirectory)
     {
-        Dictionary<string, List<CandleRow>> candlesByPath = new Dictionary<string, List<CandleRow>>(StringComparer.Ordinal);
-        string extension = format.Equals("csv", StringComparison.Ordinal) ? ".csv" : ".jsonl";
+        var candlesByPath = new Dictionary<string, List<CandleRow>>(StringComparer.Ordinal);
+        var extension = format.Equals("csv", StringComparison.Ordinal) ? ".csv" : ".jsonl";
 
-        int index = 0;
+        var index = 0;
         while (index < uniqueTrades.Count)
         {
-            string instrument = uniqueTrades[index].Instrument;
-            int start = index;
+            var instrument = uniqueTrades[index].Instrument;
+            var start = index;
             while (index < uniqueTrades.Count && uniqueTrades[index].Instrument.Equals(instrument, StringComparison.Ordinal))
             {
                 index++;
@@ -342,26 +336,26 @@ public sealed class TradeToCandleGenerator
         string outputRootDirectory,
         Dictionary<string, List<CandleRow>> candlesByPath)
     {
-        DateTimeOffset firstBucket = FloorToMinute(uniqueTrades[startInclusive].TimestampUtc);
-        DateTimeOffset lastBucket = FloorToMinute(uniqueTrades[endExclusive - 1].TimestampUtc);
+        var firstBucket = FloorToMinute(uniqueTrades[startInclusive].TimestampUtc);
+        var lastBucket = FloorToMinute(uniqueTrades[endExclusive - 1].TimestampUtc);
 
-        int tradeIndex = startInclusive;
-        DateTimeOffset currentBucket = firstBucket;
+        var tradeIndex = startInclusive;
+        var currentBucket = firstBucket;
         while (currentBucket <= lastBucket)
         {
-            int bucketStart = tradeIndex;
+            var bucketStart = tradeIndex;
             while (tradeIndex < endExclusive && FloorToMinute(uniqueTrades[tradeIndex].TimestampUtc) == currentBucket)
             {
                 tradeIndex++;
             }
 
-            CandleRow candle = BuildCandleForBucket(uniqueTrades, bucketStart, tradeIndex, source, timeframe, instrument, currentBucket);
+            var candle = BuildCandleForBucket(uniqueTrades, bucketStart, tradeIndex, source, timeframe, instrument, currentBucket);
 
-            string day = currentBucket.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            string outputPath = Path.Combine(outputRootDirectory, instrument, $"{day}{extension}");
+            var day = currentBucket.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            var outputPath = Path.Combine(outputRootDirectory, instrument, $"{day}{extension}");
             if (!candlesByPath.TryGetValue(outputPath, out List<CandleRow>? list))
             {
-                list = new List<CandleRow>();
+                list = [];
                 candlesByPath[outputPath] = list;
             }
 
@@ -394,15 +388,15 @@ public sealed class TradeToCandleGenerator
                 TradeCount: 0);
         }
 
-        decimal open = uniqueTrades[startInclusive].Price;
-        decimal close = uniqueTrades[endExclusive - 1].Price;
-        decimal high = open;
-        decimal low = open;
-        decimal volume = 0m;
+        var open = uniqueTrades[startInclusive].Price;
+        var close = uniqueTrades[endExclusive - 1].Price;
+        var high = open;
+        var low = open;
+        var volume = 0m;
 
         for (int i = startInclusive; i < endExclusive; i++)
         {
-            TradeRow trade = uniqueTrades[i];
+            var trade = uniqueTrades[i];
             if (trade.Price > high)
             {
                 high = trade.Price;
@@ -431,8 +425,8 @@ public sealed class TradeToCandleGenerator
 
     private static DateTimeOffset FloorToMinute(DateTimeOffset timestamp)
     {
-        DateTime utc = timestamp.UtcDateTime;
-        DateTime floored = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, utc.Minute, 0, DateTimeKind.Utc);
+        var utc = timestamp.UtcDateTime;
+        var floored = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, utc.Minute, 0, DateTimeKind.Utc);
         return new DateTimeOffset(floored);
     }
 
@@ -464,7 +458,7 @@ public sealed class TradeToCandleGenerator
 
         public int Compare(TradeRow left, TradeRow right)
         {
-            int result = string.Compare(left.Instrument, right.Instrument, StringComparison.Ordinal);
+            var result = string.Compare(left.Instrument, right.Instrument, StringComparison.Ordinal);
             if (result != 0)
             {
                 return result;

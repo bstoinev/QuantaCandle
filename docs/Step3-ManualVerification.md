@@ -3,7 +3,7 @@
 ## Run (null sink)
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.CLI -- collect-trades `
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- `
   --instrument BTCUSDT `
   --duration 10s `
   --rate 20 `
@@ -19,7 +19,7 @@ Expect:
 ## Run (file sink)
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.CLI -- collect-trades `
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- `
   --instrument BTCUSDT `
   --duration 10s `
   --rate 20 `
@@ -36,7 +36,7 @@ Inspect:
 ## Shutdown flush check (no periodic flush)
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.CLI -- collect-trades `
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- `
   --instrument BTCUSDT `
   --duration 5s `
   --rate 20 `

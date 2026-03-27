@@ -9,11 +9,14 @@
   <ItemGroup>
     <PackageReference Include="AWSSDK.S3" Version="4.0.19.2" />
     <PackageReference Include="LogMachina" Version="1.0.2" />
+    <PackageReference Include="LogMachina.SimpleInjector" Version="1.0.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="SimpleInjector" Version="5.5.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\QuantaCandle.Core\QuantaCandle.Core.csproj" />
+    <ProjectReference Include="..\QuantaCandle.Exchange.Binance\QuantaCandle.Exchange.Binance.csproj" />
   </ItemGroup>
 
 </Project>

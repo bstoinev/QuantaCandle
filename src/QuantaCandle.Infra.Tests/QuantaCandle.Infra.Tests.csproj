@@ -27,7 +27,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\QuantaCandle.Infra\QuantaCandle.Infra.csproj" />
-    <ProjectReference Include="..\QuantaCandle.CLI\QuantaCandle.CLI.csproj" />
     <ProjectReference Include="..\QuantaCandle.Exchange.Binance\QuantaCandle.Exchange.Binance.csproj" />
   </ItemGroup>
 

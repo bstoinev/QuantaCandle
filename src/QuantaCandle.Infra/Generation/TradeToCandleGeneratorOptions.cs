@@ -1,4 +1,4 @@
-namespace QuantaCandle.Infra;
+namespace QuantaCandle.Infra.Generation;
 
 public sealed record TradeToCandleGeneratorOptions(
     string InputDirectory,

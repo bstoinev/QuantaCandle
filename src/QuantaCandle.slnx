@@ -1,7 +1,8 @@
 <Solution>
-    <Project Path="QuantaCandle.CLI/QuantaCandle.CLI.csproj" />
+    <Project Path="QuantaCandle.CandleGenerator/QuantaCandle.CandleGenerator.csproj" />
     <Project Path="QuantaCandle.Core/QuantaCandle.Core.csproj" />
     <Project Path="QuantaCandle.Exchange.Binance/QuantaCandle.Exchange.Binance.csproj" />
     <Project Path="QuantaCandle.Infra.Tests/QuantaCandle.Infra.Tests.csproj" />
     <Project Path="QuantaCandle.Infra/QuantaCandle.Infra.csproj" />
+    <Project Path="QuantaCandle.TradeRecorder/QuantaCandle.TradeRecorder.csproj" />
 </Solution>
