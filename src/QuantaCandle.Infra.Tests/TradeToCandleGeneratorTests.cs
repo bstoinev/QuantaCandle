@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 
+using QuantaCandle.Infra.Generation;
+
 namespace QuantaCandle.Infra.Tests;
 
 public sealed class TradeToCandleGeneratorTests
