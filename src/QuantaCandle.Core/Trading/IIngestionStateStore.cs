@@ -16,7 +16,12 @@ public interface IIngestionStateStore
     ValueTask SetWatermarkAsync(ExchangeId exchange, Instrument symbol, TradeWatermark watermark, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Records an observed gap between two watermarks.
+    /// Persists the current state of a trade gap for one instrument stream.
     /// </summary>
     ValueTask RecordGapAsync(TradeGap gap, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Returns the persisted gap state snapshots for an exchange+symbol.
+    /// </summary>
+    ValueTask<IReadOnlyList<TradeGap>> GetGapsAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken);
 }
