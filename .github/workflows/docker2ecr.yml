@@ -1,4 +1,4 @@
-name: Build and push container (ECR)
+name: Build and push to ECR
 
 on:
   push:
