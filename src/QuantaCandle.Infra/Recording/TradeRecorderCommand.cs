@@ -39,6 +39,7 @@ public static class TradeRecorderCommand
         var optionArgs = RemoveCommandName(args);
         var options = ParseOptions(optionArgs);
 
+        var source = GetRequiredStringOption(options, "source");
         var sink = GetStringOption(options, "sink", "null");
         var s3Bucket = GetStringOptionOrEnvironment(options, "s3Bucket", "QUANTA_CANDLE_S3_BUCKET", "QUANTA_S3_BUCKET", "S3_BUCKET");
 
@@ -47,14 +48,13 @@ public static class TradeRecorderCommand
             throw new ArgumentException("The --s3Bucket option (or QUANTA_CANDLE_S3_BUCKET env var) is required when --sink s3 is used.");
         }
 
-        var duration = GetDurationOption(options, "duration", TimeSpan.FromMinutes(1));
+        var duration = GetOptionalDurationOption(options, "duration");
         var capacity = GetIntOption(options, "capacity", 10_000);
         var batchSize = GetIntOption(options, "batchSize", 500);
         var flushInterval = GetDurationOption(options, "flushInterval", TimeSpan.FromSeconds(1));
         var tradesPerSecond = GetIntOption(options, "rate", 10);
         var outputDir = GetStringOption(options, "outDir", "trades-out");
         var s3Prefix = GetStringOptionOrEnvironment(options, "s3Prefix", "QUANTA_CANDLE_S3_PREFIX", "QUANTA_S3_PREFIX", "S3_PREFIX");
-        var source = GetStringOption(options, "source", "stub");
         var binanceWsBase = GetStringOption(options, "binanceWsBase", BinanceTradeSourceOptions.Default.BaseWebSocketUrl);
         var instruments = GetInstruments(options);
         var collectorOptions = new CollectorOptions(
@@ -85,8 +85,9 @@ public static class TradeRecorderCommand
         writer.WriteLine("QuantaCandle.TradeRecorder");
         writer.WriteLine();
         writer.WriteLine("Usage:");
-        writer.WriteLine("  --source stub|binance --instrument BTCUSDT --duration 10m [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file|s3] [--outDir trades-out]");
-        writer.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT --duration 10m [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file|s3] [--outDir trades-out]");
+        writer.WriteLine("  --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file|s3] [--outDir trades-out]");
+        writer.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file|s3] [--outDir trades-out]");
+        writer.WriteLine("    Omit --duration to keep recording until the host or process is stopped.");
         writer.WriteLine("    S3 sink options: --s3Bucket my-bucket [--s3Prefix trades/raw] (env: QUANTA_CANDLE_S3_BUCKET, QUANTA_CANDLE_S3_PREFIX)");
         writer.WriteLine("    Binance options: [--binanceWsBase wss://stream.binance.com:9443] (try wss://stream.binance.us:9443 in the US)");
     }
@@ -176,7 +177,12 @@ public static class TradeRecorderCommand
         var raw = GetStringOption(options, "instrument", string.Empty);
         if (string.IsNullOrWhiteSpace(raw))
         {
-            raw = GetStringOption(options, "instruments", "BTC-USDT");
+            raw = GetStringOption(options, "instruments", string.Empty);
+        }
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            throw new ArgumentException("The --instrument option is required.");
         }
 
         var parts = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
@@ -219,6 +225,18 @@ public static class TradeRecorderCommand
         if (options.TryGetValue(name, out var value) && int.TryParse(value, out var parsed))
         {
             result = parsed;
+        }
+
+        return result;
+    }
+
+    private static TimeSpan? GetOptionalDurationOption(IReadOnlyDictionary<string, string> options, string name)
+    {
+        TimeSpan? result = null;
+
+        if (options.TryGetValue(name, out var value))
+        {
+            result = ParseDuration(value, TimeSpan.Zero);
         }
 
         return result;
@@ -306,6 +324,16 @@ public static class TradeRecorderCommand
         }
 
         return result;
+    }
+
+    private static string GetRequiredStringOption(IReadOnlyDictionary<string, string> options, string name)
+    {
+        if (!options.TryGetValue(name, out var value) || string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException($"The --{name} option is required.");
+        }
+
+        return value;
     }
 
     private static string GetStringOptionOrEnvironment(IReadOnlyDictionary<string, string> options, string optionName, params string[] environmentVariableNames)
