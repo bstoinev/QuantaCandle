@@ -1,5 +1,7 @@
 using LogMachina.SimpleInjector;
 
+using Amazon.S3;
+
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Exchange.Binance;
@@ -66,7 +68,8 @@ public static class TradeRecorderCompositionRoot
         {
             var s3Options = tradeSinkRegistration.S3Options;
             container.RegisterInstance(s3Options);
-            container.RegisterSingleton<IS3ObjectUploader, AwsSdkS3ObjectUploader>();
+            container.RegisterSingleton<IAmazonS3>(() => new AmazonS3Client());
+            container.RegisterSingleton<IS3ObjectUploader, AwsS3Uploader>();
             container.RegisterSingleton<ITradeSink, TradeSinkS3Simple>();
         }
         else
