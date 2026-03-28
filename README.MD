@@ -47,7 +47,13 @@ See `GIT_HOOKS.md` for details, including GitHub Actions enforcement (recommende
 
 ## Executable usage
 
-Record trades to a local directory:
+Record trades to a local directory and keep running until you stop the process:
+
+```powershell
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binance --instrument BTCUSDT --sink file --outDir trades-out
+```
+
+Run a bounded local collection that exits on its own after 30 seconds:
 
 ```powershell
 dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binance --instrument BTCUSDT --duration 30s --sink file --outDir trades-out
@@ -88,7 +94,9 @@ $tradeDir = Join-Path $root "trades"
 $candleDir = Join-Path $root "candles"
 New-Item -ItemType Directory -Force -Path $tradeDir,$candleDir | Out-Null
 
-dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binance --instrument BTCUSDT --duration 30s --sink file --outDir $tradeDir --binanceWsBase wss://stream.binance.us:9443
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binance --instrument BTCUSDT --sink file --outDir $tradeDir --binanceWsBase wss://stream.binance.us:9443
+
+# Stop it manually after a short sample window, then generate candles from the recorded trades.
 
 dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --inDir $tradeDir --outDir $candleDir
 dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --format jsonl --inDir $tradeDir --outDir $candleDir
@@ -107,9 +115,11 @@ Terraform is retired for this project. AWS infrastructure is managed manually in
 Runtime deployment flow:
 1. Push code to GitHub.
 2. GitHub Actions builds and pushes the container image to the existing ECR repository (`.github/workflows/container-ecr.yml`).
-3. In the AWS ECS web console, force a new deployment on the existing Quanta Candle service when rollout is needed.
+3. In the AWS ECS web console, force a new deployment on the existing Quanta Candle TradeRecorder service when rollout is needed.
 
-The ECS task runtime remains S3-based for trade collection output (`--sink s3` with bucket/prefix configured in the task definition/runtime settings).
+The TradeRecorder process is intended to run as a long-lived ECS Service. It keeps collecting until ECS stops or replaces the task, at which point the host shuts down gracefully and prints the final stats summary.
+
+The ECS runtime remains S3-based for trade collection output (`--sink s3` with bucket/prefix configured in the task definition/runtime settings). Use `--duration` only for explicitly bounded runs such as local smoke tests.
 
 ## CI: Build and publish to GHCR
 

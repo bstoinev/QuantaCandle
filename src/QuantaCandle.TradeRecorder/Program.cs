@@ -61,7 +61,11 @@ static async Task<int> Run(string[] args)
     container.Verify();
 
     await host.StartAsync(stopCts.Token).ConfigureAwait(false);
-    stopCts.CancelAfter(runOptions.Duration);
+
+    if (runOptions.Duration is { } duration)
+    {
+        stopCts.CancelAfter(duration);
+    }
 
     try
     {
