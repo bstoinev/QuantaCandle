@@ -1,5 +1,3 @@
-using System;
-
 namespace QuantaCandle.Core.Trading;
 
 public readonly record struct TradeWatermark

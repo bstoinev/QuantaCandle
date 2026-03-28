@@ -21,12 +21,14 @@ public sealed class InMemoryIngestionStateStore : IIngestionStateStore
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        var result = ValueTask.FromResult<TradeWatermark?>(null);
+
         if (watermarks.TryGetValue((exchange, symbol), out TradeWatermark watermark))
         {
-            return ValueTask.FromResult<TradeWatermark?>(watermark);
+            result = ValueTask.FromResult<TradeWatermark?>(watermark);
         }
 
-        return ValueTask.FromResult<TradeWatermark?>(null);
+        return result;
     }
 
     public ValueTask SetWatermarkAsync(ExchangeId exchange, Instrument symbol, TradeWatermark watermark, CancellationToken cancellationToken)

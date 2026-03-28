@@ -9,7 +9,49 @@ namespace QuantaCandle.Infra.Pipeline;
 /// </summary>
 public sealed class TradeGapDetector(IIngestionStateStore ingestionStateStore)
 {
+
+    private static bool TryGetTradeId(TradeInfo trade, out long tradeId)
+    {
+        return TryGetTradeId(trade.Key.TradeId, out tradeId);
+    }
+
+    private static bool TryGetTradeId(string tradeIdText, out long tradeId)
+    {
+        return long.TryParse(tradeIdText, NumberStyles.None, CultureInfo.InvariantCulture, out tradeId);
+    }
+
+    private static TradeWatermark ToWatermark(TradeInfo trade) => new(trade.Key.TradeId, trade.Timestamp);
+
+    private static bool TryCreateMissingTradeIdRange(string fromExclusiveTradeId, string toInclusiveTradeId, out MissingTradeIdRange? range)
+    {
+        range = null;
+
+        var hasBeginning = TryGetTradeId(fromExclusiveTradeId, out var fromTradeId);
+        var hasEnd = TryGetTradeId(toInclusiveTradeId, out var toTradeId);
+        var thereIsGap = hasBeginning && hasEnd && toTradeId > fromTradeId + 1;
+
+        if (thereIsGap)
+        {
+            range = new MissingTradeIdRange(fromTradeId + 1, toTradeId - 1);
+        }
+
+        return range is not null;
+    }
+
     private readonly Dictionary<(ExchangeId Exchange, Instrument Symbol), InstrumentGapState> _states = [];
+
+    private sealed class InstrumentGapState(Task<TradeWatermark?> resumeBoundaryTask)
+    {
+        public Task<TradeWatermark?> ResumeBoundaryTask { get; } = resumeBoundaryTask;
+
+        public bool ResumeBoundaryApplied { get; set; }
+
+        public TradeInfo? FirstObservedTrade { get; set; }
+
+        public long? LastSequencedTradeId { get; set; }
+
+        public TradeWatermark? LastSequencedWatermark { get; set; }
+    }
 
     /// <summary>
     /// Starts loading the durable resume boundary for an instrument in the background.
@@ -19,7 +61,9 @@ public sealed class TradeGapDetector(IIngestionStateStore ingestionStateStore)
         var key = (exchange, symbol);
         if (!_states.ContainsKey(key))
         {
-            _states[key] = new InstrumentGapState(LoadResumeBoundary(exchange, symbol, cancellationToken));
+            var loadBoundaryJob = ingestionStateStore.GetWatermarkAsync(exchange, symbol, cancellationToken).AsTask();
+
+            _states[key] = new InstrumentGapState(loadBoundaryJob);
         }
     }
 
@@ -32,38 +76,26 @@ public sealed class TradeGapDetector(IIngestionStateStore ingestionStateStore)
 
         var state = _states[(trade.Key.Exchange, trade.Key.Symbol)];
 
-        if (state.FirstObservedTrade is null)
-        {
-            state.FirstObservedTrade = trade;
-        }
+        state.FirstObservedTrade ??= trade;
 
         await TryApplyResumeBoundary(state, trade.Key.Exchange, trade.Key.Symbol, cancellationToken).ConfigureAwait(false);
 
-        if (!TryGetTradeId(trade, out long currentTradeId))
+        if (TryGetTradeId(trade, out long currentTradeId))
         {
-            return;
-        }
+            if (currentTradeId > (state.LastSequencedTradeId ?? long.MaxValue))
+            {
+                var gapDetected = currentTradeId > state.LastSequencedTradeId!.Value + 1;
 
-        if (state.LastSequencedTradeId is null)
-        {
-            state.LastSequencedTradeId = currentTradeId;
-            state.LastSequencedWatermark = ToWatermark(trade);
-            return;
-        }
+                if (gapDetected)
+                {
+                    var previousWatermark = state.LastSequencedWatermark ?? ToWatermark(trade);
+                    await PersistDetectedGap(trade.Key.Exchange, trade.Key.Symbol, previousWatermark, ToWatermark(trade), cancellationToken).ConfigureAwait(false);
+                }
 
-        if (currentTradeId <= state.LastSequencedTradeId.Value)
-        {
-            return;
+                state.LastSequencedTradeId = currentTradeId;
+                state.LastSequencedWatermark = ToWatermark(trade);
+            }
         }
-
-        if (currentTradeId > state.LastSequencedTradeId.Value + 1)
-        {
-            var previousWatermark = state.LastSequencedWatermark ?? ToWatermark(trade);
-            await PersistDetectedGap(trade.Key.Exchange, trade.Key.Symbol, previousWatermark, ToWatermark(trade), cancellationToken).ConfigureAwait(false);
-        }
-
-        state.LastSequencedTradeId = currentTradeId;
-        state.LastSequencedWatermark = ToWatermark(trade);
     }
 
     /// <summary>
@@ -90,21 +122,14 @@ public sealed class TradeGapDetector(IIngestionStateStore ingestionStateStore)
 
         state.ResumeBoundaryApplied = true;
 
-        TradeWatermark? resumeBoundary = await state.ResumeBoundaryTask.ConfigureAwait(false);
-        if (resumeBoundary is null || !TryGetTradeId(resumeBoundary.Value.TradeId, out long resumeTradeId))
+        var resumeBoundary = await state.ResumeBoundaryTask.ConfigureAwait(false);
+        if (resumeBoundary is not null && TryGetTradeId(resumeBoundary.Value.TradeId, out long resumeTradeId))
         {
-            return;
-        }
-
-        var firstTrade = state.FirstObservedTrade.Value;
-        if (!TryGetTradeId(firstTrade, out long firstTradeId))
-        {
-            return;
-        }
-
-        if (firstTradeId > resumeTradeId + 1)
-        {
-            await PersistDetectedGap(exchange, symbol, resumeBoundary.Value, ToWatermark(firstTrade), cancellationToken).ConfigureAwait(false);
+            var firstTrade = state.FirstObservedTrade.Value;
+            if (TryGetTradeId(firstTrade, out long firstTradeId) && firstTradeId > resumeTradeId + 1)
+            {
+                await PersistDetectedGap(exchange, symbol, resumeBoundary.Value, ToWatermark(firstTrade), cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -118,74 +143,10 @@ public sealed class TradeGapDetector(IIngestionStateStore ingestionStateStore)
         var openGap = TradeGap.CreateOpen(Guid.NewGuid(), exchange, symbol, fromExclusive, toInclusive.Timestamp);
         await ingestionStateStore.RecordGapAsync(openGap, cancellationToken).ConfigureAwait(false);
 
-        TradeGap persistedGap = openGap;
-        if (TryCreateMissingTradeIdRange(fromExclusive.TradeId, toInclusive.TradeId, out MissingTradeIdRange? missingTradeIds))
-        {
-            persistedGap = openGap.ToBounded(toInclusive, missingTradeIds);
-        }
-        else
-        {
-            persistedGap = openGap.ToBounded(toInclusive, null);
-        }
+        var persistedGap = TryCreateMissingTradeIdRange(fromExclusive.TradeId, toInclusive.TradeId, out MissingTradeIdRange? missingTradeIds)
+            ? openGap.ToBounded(toInclusive, missingTradeIds)
+            : openGap.ToBounded(toInclusive, null);
 
         await ingestionStateStore.RecordGapAsync(persistedGap, cancellationToken).ConfigureAwait(false);
-    }
-
-    private Task<TradeWatermark?> LoadResumeBoundary(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
-    {
-        return ingestionStateStore
-            .GetWatermarkAsync(exchange, symbol, cancellationToken)
-            .AsTask();
-    }
-
-    private static bool TryGetTradeId(TradeInfo trade, out long tradeId)
-    {
-        return TryGetTradeId(trade.Key.TradeId, out tradeId);
-    }
-
-    private static bool TryGetTradeId(string tradeIdText, out long tradeId)
-    {
-        return long.TryParse(tradeIdText, NumberStyles.None, CultureInfo.InvariantCulture, out tradeId);
-    }
-
-    private static TradeWatermark ToWatermark(TradeInfo trade)
-    {
-        var watermark = new TradeWatermark(trade.Key.TradeId, trade.Timestamp);
-        return watermark;
-    }
-
-    private static bool TryCreateMissingTradeIdRange(string fromExclusiveTradeId, string toInclusiveTradeId, out MissingTradeIdRange? range)
-    {
-        range = null;
-        if (!TryGetTradeId(fromExclusiveTradeId, out long fromTradeId) || !TryGetTradeId(toInclusiveTradeId, out long toTradeId))
-        {
-            return false;
-        }
-
-        if (toTradeId <= fromTradeId + 1)
-        {
-            return false;
-        }
-
-        range = new MissingTradeIdRange(fromTradeId + 1, toTradeId - 1);
-        return true;
-    }
-
-    private sealed class InstrumentGapState
-    {
-        public InstrumentGapState(Task<TradeWatermark?> resumeBoundaryTask)
-        {
-            ResumeBoundaryTask = resumeBoundaryTask;
-        }
-
-        public Task<TradeWatermark?> ResumeBoundaryTask { get; }
-
-        public bool ResumeBoundaryApplied { get; set; }
-
-        public TradeInfo? FirstObservedTrade { get; set; }
-
-        public long? LastSequencedTradeId { get; set; }
-
-        public TradeWatermark? LastSequencedWatermark { get; set; }
     }
 }
