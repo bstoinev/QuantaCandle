@@ -82,9 +82,10 @@ public sealed class TradeGapDetector(IIngestionStateStore ingestionStateStore)
 
         if (TryGetTradeId(trade, out long currentTradeId))
         {
-            if (currentTradeId > (state.LastSequencedTradeId ?? long.MaxValue))
+            if (currentTradeId > (state.LastSequencedTradeId ?? long.MinValue))
             {
-                var gapDetected = currentTradeId > state.LastSequencedTradeId!.Value + 1;
+                state.LastSequencedTradeId ??= currentTradeId + 1;
+                var gapDetected = currentTradeId > state.LastSequencedTradeId + 1;
 
                 if (gapDetected)
                 {
