@@ -71,6 +71,7 @@ static async Task<int> Run(string[] args)
     }
     catch (OperationCanceledException)
     {
+        Console.WriteLine($"Trade recorder is shutting down...");
     }
     finally
     {
@@ -79,12 +80,12 @@ static async Task<int> Run(string[] args)
 
     var snapshot = container.GetInstance<TradePipelineStats>().GetSnapshot();
 
-    Console.WriteLine($"Trades received: {snapshot.TradesReceived}");
-    Console.WriteLine($"Trades written:  {snapshot.TradesWritten}");
-    Console.WriteLine($"Duplicates dropped: {snapshot.DuplicatesDropped}");
-    Console.WriteLine($"Batches flushed: {snapshot.BatchesFlushed}");
-    Console.WriteLine($"Min timestamp:   {snapshot.MinTimestamp:O}");
-    Console.WriteLine($"Max timestamp:   {snapshot.MaxTimestamp:O}");
+    Console.WriteLine($"Trades received: ".PadLeft(22) + snapshot.TradesReceived);
+    Console.WriteLine($"Trades written:".PadLeft(22) + snapshot.TradesWritten);
+    Console.WriteLine($"Duplicates dropped:".PadLeft(22) + snapshot.DuplicatesDropped);
+    Console.WriteLine($"Batches flushed:".PadLeft(22) + snapshot.BatchesFlushed);
+    Console.WriteLine($"Min timestamp:".PadLeft(22) + $"{snapshot.MinTimestamp:O}");
+    Console.WriteLine($"Max timestamp:".PadLeft(22) + $"{snapshot.MaxTimestamp:O}");
     Console.WriteLine();
     Console.WriteLine("Trade collection completed successfully.");
 
