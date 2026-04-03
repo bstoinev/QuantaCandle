@@ -25,7 +25,7 @@ public static class TradeRecorderCompositionRoot
         ArgumentNullException.ThrowIfNull(container);
         ArgumentNullException.ThrowIfNull(options);
 
-        container.AddLogMachina(c => c.WithNLog());
+        container.AddLogMachina(c => c.WithNLog(Lifestyle.Singleton));
 
         container.RegisterInstance(options.CollectorOptions);
         container.RegisterInstance(options.RetryOptions);
