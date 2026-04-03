@@ -48,14 +48,12 @@ static async Task<int> Run(string[] args)
                 options.TimestampFormat = "HH:mm:ss ";
             });
         })
-        .ConfigureServices(services =>
-        {
-            services.AddSimpleInjector(container, simpleInjector => simpleInjector.AddHostedService<TradeCollectorHostedService>());
-        })
+        .ConfigureServices(services => services.AddSimpleInjector(container, simpleInjector => simpleInjector.AddHostedService<TradeCollectorHostedService>()))
         .UseConsoleLifetime()
         .Build();
 
     host.UseSimpleInjector(container);
+
     TradeRecorderCompositionRoot.Configure(container, runOptions);
 
     container.Verify();

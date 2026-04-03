@@ -1,11 +1,10 @@
-using LogMachina.SimpleInjector;
-
 using Amazon.S3;
+
+using LogMachina.SimpleInjector;
 
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Exchange.Binance;
-using QuantaCandle.Infra.Options;
 using QuantaCandle.Infra.Pipeline;
 using QuantaCandle.Infra.Time;
 
@@ -26,7 +25,8 @@ public static class TradeRecorderCompositionRoot
         ArgumentNullException.ThrowIfNull(container);
         ArgumentNullException.ThrowIfNull(options);
 
-        container.AddLogMachina();
+        container.AddLogMachina(c => c.WithNLog());
+
         container.RegisterInstance(options.CollectorOptions);
         container.RegisterInstance(options.RetryOptions);
 
