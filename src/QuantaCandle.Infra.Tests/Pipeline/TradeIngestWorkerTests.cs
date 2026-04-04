@@ -183,7 +183,7 @@ public sealed class TradeIngestWorkerTests
     }
 
     [Fact]
-    public async Task LiveIngestionBeginsImmediatelyWithoutWaitingForRecovery()
+    public async Task LiveIngestAppendsTradesAndCheckpointsWatermarks()
     {
         var options = CreateOptions(batchSize: 1);
         var appendObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -331,6 +331,7 @@ public sealed class TradeIngestWorkerTests
         var worker = CreateWorker(options, new List<IReadOnlyList<TradeInfo>>(), stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
+        var worker = new TradeIngestWorker(tradeSinkMoq.Object, stateStoreMoq.Object, deduplicator, stats, logMoq.Object);
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
 
         await channel.Writer.WriteAsync(CreateTrade("101", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));

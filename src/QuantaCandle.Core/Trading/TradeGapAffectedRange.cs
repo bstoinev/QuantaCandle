@@ -3,11 +3,7 @@ namespace QuantaCandle.Core.Trading;
 /// <summary>
 /// Describes one trade range that was identified or modified during gap scan or healing work.
 /// </summary>
-public sealed record TradeGapAffectedRange(
-    TradeWatermark FromInclusive,
-    TradeWatermark ToInclusive,
-    TradeGapBoundaryLocation? FromLocation = null,
-    TradeGapBoundaryLocation? ToLocation = null)
+public sealed record TradeGapAffectedRange(TradeWatermark FromInclusive, TradeWatermark ToInclusive)
 {
     /// <summary>
     /// Gets the inclusive lower bound of the affected trade range.
