@@ -36,7 +36,7 @@ Rules for those sections:
 
 ## Testing rules
 
-Prefer Moq over test doubles, and test doubles over real dependencies.
+Prefer Moq over test doubles and stubs.
 
 ## Coding standards
 

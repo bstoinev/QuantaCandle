@@ -2,7 +2,6 @@ using System.Text.Json;
 
 using Moq;
 
-using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 
 namespace QuantaCandle.Infra.Tests.Storage;
@@ -13,7 +12,6 @@ public sealed class TradeSinkS3SimpleTests
     public async Task AppendUploadsFullDailyJsonlToSameKeyAcrossFlushes()
     {
         var uploaderMoq = new Mock<IS3ObjectUploader>();
-        var clockMoq = new Mock<IClock>();
 
         var uploads = new List<UploadCall>();
         uploaderMoq
@@ -23,8 +21,7 @@ public sealed class TradeSinkS3SimpleTests
 
         var sink = new TradeSinkS3Simple(
             new TradeSinkS3SimpleOptions(BucketName: "my-bucket", Prefix: "/trades/raw/"),
-            uploaderMoq.Object,
-            clockMoq.Object);
+            uploaderMoq.Object);
 
         var firstTrade = CreateTrade(tradeId: "123", timestamp: new DateTimeOffset(2026, 3, 12, 13, 37, 0, TimeSpan.Zero), price: 10m);
         var secondTrade = CreateTrade(tradeId: "124", timestamp: new DateTimeOffset(2026, 3, 12, 13, 38, 0, TimeSpan.Zero), price: 11m);
@@ -54,7 +51,6 @@ public sealed class TradeSinkS3SimpleTests
     public async Task AppendUsesDifferentKeysAcrossUtcDateRollover()
     {
         var uploaderMoq = new Mock<IS3ObjectUploader>();
-        var clockMoq = new Mock<IClock>();
 
         var uploads = new List<UploadCall>();
         uploaderMoq
@@ -64,8 +60,7 @@ public sealed class TradeSinkS3SimpleTests
 
         var sink = new TradeSinkS3Simple(
             new TradeSinkS3SimpleOptions(BucketName: "my-bucket", Prefix: "trades/raw"),
-            uploaderMoq.Object,
-            clockMoq.Object);
+            uploaderMoq.Object);
 
         var march28Trade = CreateTrade(tradeId: "1", timestamp: new DateTimeOffset(2026, 3, 28, 23, 59, 59, TimeSpan.Zero), price: 10m);
         var march29Trade = CreateTrade(tradeId: "2", timestamp: new DateTimeOffset(2026, 3, 29, 0, 0, 0, TimeSpan.Zero), price: 11m);
@@ -81,7 +76,6 @@ public sealed class TradeSinkS3SimpleTests
     public async Task AppendOmitsLeadingSlashWhenPrefixIsEmpty()
     {
         var uploaderMoq = new Mock<IS3ObjectUploader>();
-        var clockMoq = new Mock<IClock>();
 
         var uploads = new List<UploadCall>();
         uploaderMoq
@@ -91,8 +85,7 @@ public sealed class TradeSinkS3SimpleTests
 
         var sink = new TradeSinkS3Simple(
             new TradeSinkS3SimpleOptions(BucketName: "my-bucket", Prefix: string.Empty),
-            uploaderMoq.Object,
-            clockMoq.Object);
+            uploaderMoq.Object);
 
         var trade = CreateTrade(tradeId: "123", timestamp: new DateTimeOffset(2026, 3, 12, 13, 37, 0, TimeSpan.Zero), price: 10m);
 

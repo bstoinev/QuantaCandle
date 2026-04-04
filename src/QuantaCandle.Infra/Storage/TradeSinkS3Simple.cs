@@ -1,21 +1,25 @@
 using System.Text.Json;
 
-using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 
 namespace QuantaCandle.Infra;
 
+/// <summary>
+/// Buffers the active UTC trade day in memory and writes instrument-day aggregates to S3.
+/// Incomplete current-day state is not recovered from S3 because S3 is reserved for finalized daily files,
+/// not active-day resume state.
+/// </summary>
 public sealed class TradeSinkS3Simple : ITradeSink
 {
     private readonly TradeSinkS3SimpleOptions options;
     private readonly IS3ObjectUploader uploader;
+    // Active UTC day data lives only in memory until a later persistence tier is introduced.
     private readonly Dictionary<(Instrument Instrument, DateOnly UtcDate), List<TradeInfo>> bufferedTradesByDay = [];
 
-    public TradeSinkS3Simple(TradeSinkS3SimpleOptions options, IS3ObjectUploader uploader, IClock clock)
+    public TradeSinkS3Simple(TradeSinkS3SimpleOptions options, IS3ObjectUploader uploader)
     {
         this.options = options ?? throw new ArgumentNullException(nameof(options));
         this.uploader = uploader ?? throw new ArgumentNullException(nameof(uploader));
-        ArgumentNullException.ThrowIfNull(clock);
 
         if (string.IsNullOrWhiteSpace(this.options.BucketName))
         {
