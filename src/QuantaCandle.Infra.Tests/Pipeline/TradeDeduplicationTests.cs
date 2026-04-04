@@ -139,6 +139,9 @@ public sealed class TradeDeduplicationTests
 
         var stateStoreMoq = new Mock<IIngestionStateStore>();
         stateStoreMoq
+            .Setup(mock => mock.GetResumeBoundaryAsync(It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.FromResult<ResumeBoundary?>(null));
+        stateStoreMoq
             .Setup(mock => mock.SetWatermarkAsync(It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), It.IsAny<TradeWatermark>(), It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
 

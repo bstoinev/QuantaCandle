@@ -39,6 +39,23 @@ public sealed class TradeRecorderCommandTests
     }
 
     [Fact]
+    public void ParsesS3RecorderOptionsWithDeterministicLocalRootAndCheckpointInterval()
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+            "--sink", "s3",
+            "--outDir", "local-trades",
+            "--s3Bucket", "bucket-name",
+        ]);
+
+        Assert.NotNull(options.SinkRegistration.S3Options);
+        Assert.Equal("local-trades", options.SinkRegistration.S3Options.LocalRootDirectory);
+        Assert.Equal(TimeSpan.FromHours(1), options.SinkRegistration.S3Options.CheckpointInterval);
+    }
+
+    [Fact]
     public void RejectsMissingRequiredInstrumentWhenDurationIsOmitted()
     {
         var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(["--source", "binance"]));

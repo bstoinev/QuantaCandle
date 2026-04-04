@@ -10,7 +10,7 @@ using QuantaCandle.Infra.Time;
 
 using SimpleInjector;
 
-namespace QuantaCandle.Infra;
+namespace QuantaCandle.Infra.Recording;
 
 /// <summary>
 /// Configures the reusable trade recorder runtime graph in Simple Injector.
@@ -54,14 +54,15 @@ public static class TradeRecorderCompositionRoot
             container.RegisterSingleton<ITradeSource, TradeSourceStub>();
         }
 
-        container.RegisterSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
     }
 
     private static void RegisterTradeSink(Container container, TradeRecorderSinkRegistration tradeSinkRegistration)
     {
         if (tradeSinkRegistration.FileOptions is not null)
         {
-            container.RegisterInstance(tradeSinkRegistration.FileOptions);
+            var fileOptions = tradeSinkRegistration.FileOptions;
+            container.RegisterInstance(fileOptions);
+            container.RegisterSingleton<IIngestionStateStore>(() => new LocalFileIngestionStateStore(fileOptions.OutputDirectory, container.GetInstance<IClock>()));
             container.RegisterSingleton<ITradeSink, TradeSinkFileSimple>();
         }
         else if (tradeSinkRegistration.S3Options is not null)
@@ -70,10 +71,12 @@ public static class TradeRecorderCompositionRoot
             container.RegisterInstance(s3Options);
             container.RegisterSingleton<IAmazonS3>(() => new AmazonS3Client());
             container.RegisterSingleton<IS3ObjectUploader, AwsS3Uploader>();
+            container.RegisterSingleton<IIngestionStateStore>(() => new LocalFileIngestionStateStore(s3Options.LocalRootDirectory, container.GetInstance<IClock>()));
             container.RegisterSingleton<ITradeSink, TradeSinkS3Simple>();
         }
         else
         {
+            container.RegisterSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
             container.RegisterSingleton<ITradeSink, TradeSinkNull>();
         }
     }

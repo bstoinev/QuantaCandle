@@ -6,6 +6,11 @@ namespace QuantaCandle.Core.Trading;
 public interface IIngestionStateStore
 {
     /// <summary>
+    /// Gets the startup resume lower bound for an exchange+symbol, if any.
+    /// </summary>
+    ValueTask<ResumeBoundary?> GetResumeBoundaryAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Gets the last committed ingestion watermark for an exchange+symbol, if any.
     /// </summary>
     ValueTask<TradeWatermark?> GetWatermarkAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken);

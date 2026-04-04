@@ -40,9 +40,11 @@ public sealed class TradeGapDetector(IIngestionStateStore ingestionStateStore)
 
     private readonly Dictionary<(ExchangeId Exchange, Instrument Symbol), InstrumentGapState> _states = [];
 
-    private sealed class InstrumentGapState(Task<TradeWatermark?> resumeBoundaryTask)
+    private sealed class InstrumentGapState(Task<ResumeBoundary?> resumeBoundaryTask, Task<TradeWatermark?> resumeWatermarkTask)
     {
-        public Task<TradeWatermark?> ResumeBoundaryTask { get; } = resumeBoundaryTask;
+        public Task<ResumeBoundary?> ResumeBoundaryTask { get; } = resumeBoundaryTask;
+
+        public Task<TradeWatermark?> ResumeWatermarkTask { get; } = resumeWatermarkTask;
 
         public bool ResumeBoundaryApplied { get; set; }
 
@@ -61,9 +63,10 @@ public sealed class TradeGapDetector(IIngestionStateStore ingestionStateStore)
         var key = (exchange, symbol);
         if (!_states.ContainsKey(key))
         {
-            var loadBoundaryJob = ingestionStateStore.GetWatermarkAsync(exchange, symbol, cancellationToken).AsTask();
+            var loadBoundaryJob = ingestionStateStore.GetResumeBoundaryAsync(exchange, symbol, cancellationToken).AsTask();
+            var loadWatermarkJob = ingestionStateStore.GetWatermarkAsync(exchange, symbol, cancellationToken).AsTask();
 
-            _states[key] = new InstrumentGapState(loadBoundaryJob);
+            _states[key] = new InstrumentGapState(loadBoundaryJob, loadWatermarkJob);
         }
     }
 
@@ -116,20 +119,39 @@ public sealed class TradeGapDetector(IIngestionStateStore ingestionStateStore)
         Instrument symbol,
         CancellationToken cancellationToken)
     {
-        if (state.ResumeBoundaryApplied || state.FirstObservedTrade is null || !state.ResumeBoundaryTask.IsCompletedSuccessfully)
+        if (state.ResumeBoundaryApplied
+            || state.FirstObservedTrade is null
+            || !state.ResumeBoundaryTask.IsCompletedSuccessfully
+            || !state.ResumeWatermarkTask.IsCompletedSuccessfully)
         {
             return;
         }
 
         state.ResumeBoundaryApplied = true;
 
-        var resumeBoundary = await state.ResumeBoundaryTask.ConfigureAwait(false);
-        if (resumeBoundary is not null && TryGetTradeId(resumeBoundary.Value.TradeId, out long resumeTradeId))
+        var resumeWatermark = await state.ResumeWatermarkTask.ConfigureAwait(false);
+        if (resumeWatermark is not null && TryGetTradeId(resumeWatermark.Value.TradeId, out long resumeTradeId))
         {
             var firstTrade = state.FirstObservedTrade.Value;
             if (TryGetTradeId(firstTrade, out long firstTradeId) && firstTradeId > resumeTradeId + 1)
             {
-                await PersistDetectedGap(exchange, symbol, resumeBoundary.Value, ToWatermark(firstTrade), cancellationToken).ConfigureAwait(false);
+                await PersistDetectedGap(exchange, symbol, resumeWatermark.Value, ToWatermark(firstTrade), cancellationToken).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
+        var resumeBoundary = await state.ResumeBoundaryTask.ConfigureAwait(false);
+        if (resumeBoundary is not null)
+        {
+            var firstTrade = state.FirstObservedTrade.Value;
+            if (firstTrade.Timestamp > resumeBoundary.Value.TimestampUtc)
+            {
+                var boundaryWatermark = new TradeWatermark(
+                    firstTrade.Key.TradeId,
+                    resumeBoundary.Value.TimestampUtc);
+
+                await PersistDetectedGap(exchange, symbol, boundaryWatermark, ToWatermark(firstTrade), cancellationToken).ConfigureAwait(false);
             }
         }
     }

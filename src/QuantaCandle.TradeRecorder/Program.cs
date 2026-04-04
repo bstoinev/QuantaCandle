@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 
 using QuantaCandle.Infra;
 using QuantaCandle.Infra.Pipeline;
+using QuantaCandle.Infra.Recording;
 
 using SimpleInjector;
 

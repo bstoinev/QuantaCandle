@@ -66,6 +66,23 @@ public sealed class TradeIngestWorkerTests
     }
 
     [Fact]
+    public async Task InvokesSinkShutdownFlushWhenLifecycleIsAvailable()
+    {
+        var options = CreateOptions(batchSize: 3);
+        var lifecycleSink = new RecordingLifecycleTradeSink();
+        var worker = CreateWorker(options, lifecycleSink, new InMemoryIngestionStateStore(), out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        var run = worker.Run(channel.Reader, options, CancellationToken.None);
+
+        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
+        channel.Writer.Complete();
+        await run;
+
+        Assert.Equal(1, lifecycleSink.ShutdownFlushCallCount);
+    }
+
+    [Fact]
     public async Task LiveIngestionBeginsImmediatelyWithoutWaitingForRecovery()
     {
         var options = CreateOptions(batchSize: 1);
@@ -164,6 +181,39 @@ public sealed class TradeIngestWorkerTests
     }
 
     [Fact]
+    public async Task StartupResumeBoundaryCreatesGapWithoutManufacturingFakeTrade()
+    {
+        var options = CreateOptions(batchSize: 1);
+        var stateStore = new InMemoryIngestionStateStore();
+        stateStore.SetResumeBoundary(
+            new ExchangeId("Stub"),
+            options.Instruments[0],
+            new ResumeBoundary(
+                new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero),
+                new DateOnly(2026, 3, 12),
+                "LatestLocalDailyFile"));
+
+        var worker = CreateWorker(options, new List<IReadOnlyList<TradeInfo>>(), stateStore, out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        var run = worker.Run(channel.Reader, options, CancellationToken.None);
+
+        await channel.Writer.WriteAsync(CreateTrade("105", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 5, TimeSpan.Zero)));
+
+        channel.Writer.Complete();
+        await run;
+
+        var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), options.Instruments[0], CancellationToken.None);
+
+        var gap = Assert.Single(gaps);
+        Assert.Equal(TradeGapStatus.Bounded, gap.Status);
+        Assert.Equal("105", gap.FromExclusive.TradeId);
+        Assert.Equal(new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero), gap.FromExclusive.Timestamp);
+        Assert.Equal("105", gap.ToInclusive?.TradeId);
+        Assert.Null(gap.MissingTradeIds);
+    }
+
+    [Fact]
     public async Task DuplicateOrOutOfOrderEventsDoNotCreateFalseGaps()
     {
         var options = CreateOptions(batchSize: 4);
@@ -213,11 +263,20 @@ public sealed class TradeIngestWorkerTests
                 return ValueTask.FromResult(new TradeAppendResult(InsertedCount: trades.Count, DuplicateCount: 0));
             });
 
+        return CreateWorker(options, tradeSinkMoq.Object, ingestionStateStore, out stats);
+    }
+
+    private static TradeIngestWorker CreateWorker(
+        CollectorOptions options,
+        ITradeSink tradeSink,
+        IIngestionStateStore ingestionStateStore,
+        out TradePipelineStats stats)
+    {
         stats = new TradePipelineStats();
         var deduplicator = new InMemoryTradeDeduplicator(options);
         var logMoq = new Mock<ILogMachina<TradeIngestWorker>>();
 
-        var worker = new TradeIngestWorker(tradeSinkMoq.Object, ingestionStateStore, deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(tradeSink, ingestionStateStore, deduplicator, stats, logMoq.Object);
         return worker;
     }
 
@@ -229,19 +288,24 @@ public sealed class TradeIngestWorkerTests
 
     private sealed class BlockingIngestionStateStore : IIngestionStateStore
     {
-        private readonly TaskCompletionSource<TradeWatermark?> resumeBoundary;
+        private readonly TaskCompletionSource<ResumeBoundary?> resumeBoundary;
 
         public BlockingIngestionStateStore()
         {
-            resumeBoundary = new TaskCompletionSource<TradeWatermark?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            resumeBoundary = new TaskCompletionSource<ResumeBoundary?>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
         public bool GetWatermarkStarted { get; private set; }
 
-        public ValueTask<TradeWatermark?> GetWatermarkAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
+        public ValueTask<ResumeBoundary?> GetResumeBoundaryAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
         {
             GetWatermarkStarted = true;
-            return new ValueTask<TradeWatermark?>(resumeBoundary.Task.WaitAsync(cancellationToken));
+            return new ValueTask<ResumeBoundary?>(resumeBoundary.Task.WaitAsync(cancellationToken));
+        }
+
+        public ValueTask<TradeWatermark?> GetWatermarkAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
+        {
+            return ValueTask.FromResult<TradeWatermark?>(null);
         }
 
         public ValueTask SetWatermarkAsync(ExchangeId exchange, Instrument symbol, TradeWatermark watermark, CancellationToken cancellationToken)
@@ -269,6 +333,11 @@ public sealed class TradeIngestWorkerTests
     {
         public List<TradeGap> RecordedGaps { get; } = new();
 
+        public ValueTask<ResumeBoundary?> GetResumeBoundaryAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
+        {
+            return ValueTask.FromResult<ResumeBoundary?>(null);
+        }
+
         public ValueTask<TradeWatermark?> GetWatermarkAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
         {
             return ValueTask.FromResult<TradeWatermark?>(null);
@@ -288,6 +357,27 @@ public sealed class TradeIngestWorkerTests
         public ValueTask<IReadOnlyList<TradeGap>> GetGapsAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
         {
             return ValueTask.FromResult<IReadOnlyList<TradeGap>>(RecordedGaps);
+        }
+    }
+
+    private sealed class RecordingLifecycleTradeSink : ITradeSink, ITradeSinkLifecycle
+    {
+        public int ShutdownFlushCallCount { get; private set; }
+
+        public ValueTask<TradeAppendResult> Append(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+        {
+            return ValueTask.FromResult(new TradeAppendResult(trades.Count, DuplicateCount: 0));
+        }
+
+        public ValueTask CheckpointActive(CancellationToken cancellationToken)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask FlushOnShutdown(CancellationToken cancellationToken)
+        {
+            ShutdownFlushCallCount++;
+            return ValueTask.CompletedTask;
         }
     }
 }

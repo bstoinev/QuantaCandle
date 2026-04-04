@@ -8,13 +8,29 @@ namespace QuantaCandle.Infra;
 
 public sealed class InMemoryIngestionStateStore : IIngestionStateStore
 {
+    private readonly ConcurrentDictionary<(ExchangeId Exchange, Instrument Symbol), ResumeBoundary> resumeBoundaries;
     private readonly ConcurrentDictionary<(ExchangeId Exchange, Instrument Symbol), TradeWatermark> watermarks;
     private readonly ConcurrentDictionary<(ExchangeId Exchange, Instrument Symbol), ConcurrentDictionary<Guid, TradeGap>> gaps;
 
     public InMemoryIngestionStateStore()
     {
+        resumeBoundaries = new ConcurrentDictionary<(ExchangeId, Instrument), ResumeBoundary>();
         watermarks = new ConcurrentDictionary<(ExchangeId, Instrument), TradeWatermark>();
         gaps = new ConcurrentDictionary<(ExchangeId, Instrument), ConcurrentDictionary<Guid, TradeGap>>();
+    }
+
+    public ValueTask<ResumeBoundary?> GetResumeBoundaryAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var result = ValueTask.FromResult<ResumeBoundary?>(null);
+
+        if (resumeBoundaries.TryGetValue((exchange, symbol), out ResumeBoundary resumeBoundary))
+        {
+            result = ValueTask.FromResult<ResumeBoundary?>(resumeBoundary);
+        }
+
+        return result;
     }
 
     public ValueTask<TradeWatermark?> GetWatermarkAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
@@ -66,5 +82,13 @@ public sealed class InMemoryIngestionStateStore : IIngestionStateStore
         }
 
         return ValueTask.FromResult(result);
+    }
+
+    /// <summary>
+    /// Stores a startup resume lower bound for one instrument stream.
+    /// </summary>
+    public void SetResumeBoundary(ExchangeId exchange, Instrument symbol, ResumeBoundary resumeBoundary)
+    {
+        resumeBoundaries[(exchange, symbol)] = resumeBoundary;
     }
 }

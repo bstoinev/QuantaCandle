@@ -162,7 +162,7 @@ public static class TradeRecorderCommand
         }
         else if (sink.Equals("s3", StringComparison.OrdinalIgnoreCase))
         {
-            registration = new TradeRecorderSinkRegistration(null, new TradeSinkS3SimpleOptions(s3Bucket, s3Prefix));
+            registration = new TradeRecorderSinkRegistration(null, new TradeSinkS3SimpleOptions(s3Bucket, s3Prefix, outputDir, TimeSpan.FromHours(1)));
         }
         else
         {

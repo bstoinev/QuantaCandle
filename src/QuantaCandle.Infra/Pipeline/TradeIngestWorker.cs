@@ -14,6 +14,8 @@ public sealed class TradeIngestWorker(
     TradePipelineStats stats,
     ILogMachina<TradeIngestWorker> log)
 {
+    private readonly ITradeSinkLifecycle? tradeSinkLifecycle = tradeSink as ITradeSinkLifecycle;
+
     public async Task Run(ChannelReader<TradeInfo> reader, CollectorOptions options, CancellationToken stoppingToken)
     {
         Task<bool>? waitToReadTask = null;
@@ -33,6 +35,7 @@ public sealed class TradeIngestWorker(
                 if (completed == tickTask)
                 {
                     await FlushBatch(batch, stoppingToken).ConfigureAwait(false);
+                    await CheckpointSink(stoppingToken).ConfigureAwait(false);
                     tickTask = timer.WaitForNextTickAsync(stoppingToken).AsTask();
                     continue;
                 }
@@ -100,6 +103,7 @@ public sealed class TradeIngestWorker(
 
             await gapDetector.FlushPending(CancellationToken.None).ConfigureAwait(false);
             await FlushBatch(batch, CancellationToken.None).ConfigureAwait(false);
+            await FlushSinkOnShutdown(CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -125,5 +129,35 @@ public sealed class TradeIngestWorker(
                 await ingestionStateStore.SetWatermarkAsync(kvp.Key.Exchange, kvp.Key.Symbol, kvp.Value, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Runs any due sink checkpoint work without coupling the worker to a specific sink implementation.
+    /// </summary>
+    private ValueTask CheckpointSink(CancellationToken cancellationToken)
+    {
+        var result = ValueTask.CompletedTask;
+
+        if (tradeSinkLifecycle is not null)
+        {
+            result = tradeSinkLifecycle.CheckpointActive(cancellationToken);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Flushes any remaining active sink state during graceful shutdown.
+    /// </summary>
+    private ValueTask FlushSinkOnShutdown(CancellationToken cancellationToken)
+    {
+        var result = ValueTask.CompletedTask;
+
+        if (tradeSinkLifecycle is not null)
+        {
+            result = tradeSinkLifecycle.FlushOnShutdown(cancellationToken);
+        }
+
+        return result;
     }
 }

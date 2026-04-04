@@ -3,6 +3,7 @@ using SimpleInjector;
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Infra.Options;
+using QuantaCandle.Infra.Recording;
 
 namespace QuantaCandle.Infra.Tests.Recording;
 
@@ -26,15 +27,17 @@ public sealed class TradeRecorderCompositionRootTests
                 new RetryOptions(InitialDelay: TimeSpan.FromMilliseconds(100), MaxDelay: TimeSpan.FromSeconds(5)),
                 new TradeRecorderSourceRegistration(BinanceOptions: null,
                     StubOptions: new TradeSourceStubOptions(Exchange: new ExchangeId("Stub"), TradesPerSecond: 1, StartPrice: 50_000m, PriceStep: 0.01m, Quantity: 0.001m)),
-                new TradeRecorderSinkRegistration(FileOptions: null, S3Options: new TradeSinkS3SimpleOptions(BucketName: "bucket-name", Prefix: "trades")));
+                new TradeRecorderSinkRegistration(FileOptions: null, S3Options: new TradeSinkS3SimpleOptions(BucketName: "bucket-name", Prefix: "trades", LocalRootDirectory: "trades-out", CheckpointInterval: TimeSpan.FromHours(1))));
 
             TradeRecorderCompositionRoot.Configure(container, options);
 
             container.Verify();
 
+            var ingestionStateStore = container.GetInstance<IIngestionStateStore>();
             var uploader = container.GetInstance<IS3ObjectUploader>();
             var sink = container.GetInstance<ITradeSink>();
 
+            Assert.IsType<LocalFileIngestionStateStore>(ingestionStateStore);
             Assert.IsType<AwsS3Uploader>(uploader);
             Assert.IsType<TradeSinkS3Simple>(sink);
         }
