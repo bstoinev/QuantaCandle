@@ -57,8 +57,7 @@ public sealed class LocalFileTradeGapScanner : ITradeGapScanner
 
                 if (!long.TryParse(trade.Key.TradeId, NumberStyles.None, CultureInfo.InvariantCulture, out var numericTradeId))
                 {
-                    skippedNonNumericTradeCount++;
-                    continue;
+                    throw new InvalidOperationException($"TradeId '{trade.Key.TradeId}' at line {lineNumber} in '{file.FullPath}' is not numeric.");
                 }
 
                 var streamKey = new StreamKey(trade.Key.Exchange, trade.Key.Symbol);
@@ -201,7 +200,12 @@ public sealed class LocalFileTradeGapScanner : ITradeGapScanner
                     .ToBounded(toInclusive, missingTradeIds);
 
                 detectedGaps.Add(gap);
-                affectedRanges.Add(new TradeGapAffectedRange(fromExclusive, toInclusive));
+                affectedRanges.Add(
+                    new TradeGapAffectedRange(
+                        fromExclusive,
+                        toInclusive,
+                        new TradeGapBoundaryLocation(previousTrade.Value.RelativeFilePath, previousTrade.Value.LineNumber),
+                        new TradeGapBoundaryLocation(trade.RelativeFilePath, trade.LineNumber)));
             }
 
             previousTrade = trade;
