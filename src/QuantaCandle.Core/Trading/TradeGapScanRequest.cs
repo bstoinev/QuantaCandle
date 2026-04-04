@@ -3,17 +3,14 @@ namespace QuantaCandle.Core.Trading;
 /// <summary>
 /// Defines the scope for a gap scan without implying that healing will happen.
 /// </summary>
-public sealed record TradeGapScanRequest(ExchangeId Exchange, Instrument Symbol, IReadOnlyList<TradeGapAffectedFile> CandidateFiles, IReadOnlyList<TradeGapAffectedRange> CandidateRanges)
+public sealed record TradeGapScanRequest(string RootDirectory, IReadOnlyList<TradeGapAffectedFile> CandidateFiles, IReadOnlyList<TradeGapAffectedRange> CandidateRanges)
 {
     /// <summary>
-    /// Gets the exchange to scan.
+    /// Gets the local root directory that contains recorder-style trade JSONL files.
     /// </summary>
-    public ExchangeId Exchange { get; } = Exchange;
-
-    /// <summary>
-    /// Gets the instrument to scan.
-    /// </summary>
-    public Instrument Symbol { get; } = Symbol;
+    public string RootDirectory { get; } = string.IsNullOrWhiteSpace(RootDirectory)
+        ? throw new ArgumentException("RootDirectory cannot be null or whitespace.", nameof(RootDirectory))
+        : Path.GetFullPath(RootDirectory.Trim());
 
     /// <summary>
     /// Gets the candidate files to inspect when the scan is file-backed.
