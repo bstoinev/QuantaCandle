@@ -67,6 +67,12 @@ public sealed class LocalFileTradeGapScannerTests
             var affectedRange = Assert.Single(result.AffectedRanges);
             Assert.Equal("100", affectedRange.FromInclusive.TradeId);
             Assert.Equal("103", affectedRange.ToInclusive.TradeId);
+            Assert.NotNull(affectedRange.FromLocation);
+            Assert.NotNull(affectedRange.ToLocation);
+            Assert.Equal(Path.Combine("BTC-USDT", "2026-03-12.jsonl"), affectedRange.FromLocation!.FilePath);
+            Assert.Equal(1, affectedRange.FromLocation.LineNumber);
+            Assert.Equal(Path.Combine("BTC-USDT", "2026-03-12.jsonl"), affectedRange.ToLocation!.FilePath);
+            Assert.Equal(2, affectedRange.ToLocation.LineNumber);
         }
         finally
         {
@@ -104,7 +110,7 @@ public sealed class LocalFileTradeGapScannerTests
     }
 
     [Fact]
-    public async Task NonNumericTradeIdsAreIgnoredGracefully()
+    public async Task NonNumericTradeIdsFailLoudly()
     {
         var root = CreateTempRoot();
 
@@ -119,11 +125,13 @@ public sealed class LocalFileTradeGapScannerTests
                 Trade("binance", "BTC-USDT", "101", "2026-03-12T00:00:03Z"));
 
             var scanner = new LocalFileTradeGapScanner();
-            var result = await scanner.Scan(new TradeGapScanRequest(root, [], []), CancellationToken.None);
+            var path = Path.Combine(root, "BTC-USDT", "2026-03-12.jsonl");
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => await scanner.Scan(new TradeGapScanRequest(root, [], []), CancellationToken.None));
 
-            Assert.Equal(3, result.TotalTradesScanned);
-            Assert.Equal(1, result.SkippedNonNumericTradeCount);
-            Assert.Empty(result.DetectedGaps);
+            Assert.Contains("not-numeric", exception.Message, StringComparison.Ordinal);
+            Assert.Contains(path, exception.Message, StringComparison.Ordinal);
+            Assert.Contains("line 2", exception.Message, StringComparison.Ordinal);
         }
         finally
         {

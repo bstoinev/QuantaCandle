@@ -62,13 +62,26 @@ dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binan
 Generate deterministic 1-minute candles from collected trades (CSV default):
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --inDir trades-out --outDir candles-out
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode generate-candles --source binance --timeframe 1m --inDir trades-out --outDir candles-out
 ```
 
 Generate candles as JSONL (optional):
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --format jsonl --inDir trades-out --outDir candles-out
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode generate-candles --source binance --timeframe 1m --format jsonl --inDir trades-out --outDir candles-out
+```
+
+Scan locally recorded trade files for numeric trade ID gaps without modifying any files:
+
+```powershell
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode scan-gaps --inDir trades-out
+```
+
+Scan a specific local dataset root and review the per-gap summary output:
+
+```powershell
+$tradeDir = Join-Path (Get-Location) "tmp-e2e\trades"
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode scan-gaps --inDir $tradeDir
 ```
 
 Input format (trade files): `<inDir>/<INSTRUMENT>/<yyyy-MM-dd>.jsonl`
@@ -98,8 +111,9 @@ dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binan
 
 # Stop it manually after a short sample window, then generate candles from the recorded trades.
 
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --inDir $tradeDir --outDir $candleDir
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --source binance --timeframe 1m --format jsonl --inDir $tradeDir --outDir $candleDir
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode scan-gaps --inDir $tradeDir
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode generate-candles --source binance --timeframe 1m --inDir $tradeDir --outDir $candleDir
+dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode generate-candles --source binance --timeframe 1m --format jsonl --inDir $tradeDir --outDir $candleDir
 
 Get-ChildItem -Recurse $candleDir -Filter *.csv | Sort-Object FullName
 $firstCandleFile = Get-ChildItem -Recurse (Join-Path $candleDir "binance\1m\BTC-USDT") -Filter *.csv | Sort-Object FullName | Select-Object -First 1
