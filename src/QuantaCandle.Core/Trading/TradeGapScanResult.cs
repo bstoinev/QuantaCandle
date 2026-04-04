@@ -3,17 +3,34 @@ namespace QuantaCandle.Core.Trading;
 /// <summary>
 /// Represents the output of a gap scan that only reports detected gaps and affected inputs.
 /// </summary>
-public sealed record TradeGapScanResult(ExchangeId Exchange, Instrument Symbol, IReadOnlyList<TradeGap> DetectedGaps, IReadOnlyList<TradeGapAffectedFile> AffectedFiles, IReadOnlyList<TradeGapAffectedRange> AffectedRanges)
+public sealed record TradeGapScanResult(
+    int TotalFilesScanned,
+    int TotalTradesScanned,
+    int SkippedNonNumericTradeCount,
+    IReadOnlyList<TradeGap> DetectedGaps,
+    IReadOnlyList<TradeGapAffectedFile> AffectedFiles,
+    IReadOnlyList<TradeGapAffectedRange> AffectedRanges)
 {
     /// <summary>
-    /// Gets the scanned exchange.
+    /// Gets the number of JSONL files scanned.
     /// </summary>
-    public ExchangeId Exchange { get; } = Exchange;
+    public int TotalFilesScanned { get; } = TotalFilesScanned < 0
+        ? throw new ArgumentOutOfRangeException(nameof(TotalFilesScanned), TotalFilesScanned, "TotalFilesScanned cannot be negative.")
+        : TotalFilesScanned;
 
     /// <summary>
-    /// Gets the scanned instrument.
+    /// Gets the number of trade rows successfully parsed from the scanned files.
     /// </summary>
-    public Instrument Symbol { get; } = Symbol;
+    public int TotalTradesScanned { get; } = TotalTradesScanned < 0
+        ? throw new ArgumentOutOfRangeException(nameof(TotalTradesScanned), TotalTradesScanned, "TotalTradesScanned cannot be negative.")
+        : TotalTradesScanned;
+
+    /// <summary>
+    /// Gets the number of parsed trades skipped from gap sequencing because the trade identifier was not numeric.
+    /// </summary>
+    public int SkippedNonNumericTradeCount { get; } = SkippedNonNumericTradeCount < 0
+        ? throw new ArgumentOutOfRangeException(nameof(SkippedNonNumericTradeCount), SkippedNonNumericTradeCount, "SkippedNonNumericTradeCount cannot be negative.")
+        : SkippedNonNumericTradeCount;
 
     /// <summary>
     /// Gets the gaps detected by the scan.
