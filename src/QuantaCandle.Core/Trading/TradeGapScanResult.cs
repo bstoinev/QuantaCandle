@@ -27,6 +27,7 @@ public sealed record TradeGapScanResult(
 
     /// <summary>
     /// Gets the number of parsed trades skipped from gap sequencing because the trade identifier was not numeric.
+    /// Successful scans keep this value at zero because non-numeric trade identifiers are treated as fatal contract violations.
     /// </summary>
     public int SkippedNonNumericTradeCount { get; } = SkippedNonNumericTradeCount < 0
         ? throw new ArgumentOutOfRangeException(nameof(SkippedNonNumericTradeCount), SkippedNonNumericTradeCount, "SkippedNonNumericTradeCount cannot be negative.")
