@@ -34,6 +34,31 @@ Rules for those sections:
 * Prefer primary over regular ctor-s
 * Prefer expression-bodied members for simple methods and properties, but use regular method bodies for complex methods and properties with multiple statements.
 
+## Logging
+Make extensive use of `ILogMachina<>` for logging, and log at appropriate levels (e.g., `Debug`, `Info`, `Warning`, `Error`) based on the significance of the event being logged.
+
+Use `Trace` level for detailed information on the execution flow.
+Use `Debug` to dump technical information to log messages and include relevant context information to facilitate troubleshooting and analysis.
+Use `Info` for general information about the application's operation, useful from user's perspective.
+Use `Warning` for potential issues that do not prevent the application from functioning and recoverable errors.
+Use `Error` for exceptions and critical issues that require immediate attention. If it is a caught error, precede the error message with a warning message describing the circumstances. Awayse include debug info. You may construct the logging block like this:
+```csharp
+    try {
+        // code that may throw an exception
+    }
+    catch (Exception ex)
+    {
+        Log.Warning("Circumstance A is available but unable to process due to...");
+        Log.Error(ex);
+        Log.Debug("{dump_any_relevant_process_info}");
+    }
+```
+
+Do not overengineer message construction. Most of the time it should read like this: `_log.Info($"Some message with {variable}");`.
+Do not bloat the log with redundant information. E.g., if you are logging an exception, do not include the exception message in the log message, as it will be included in the log entry automatically.
+
+ Do not hesitate to stack log messages at different levels. You might log a trace message, followed by debug and info messages, to depict the different pictures for user and developer. The noise will be controlled at runtime by regulating log level emission.
+
 ## Testing rules
 
 Prefer Moq over test doubles and stubs.
@@ -44,7 +69,7 @@ Prefer Moq over test doubles and stubs.
 * Do not use underscore in method names, including test methods. Use descriptive PascalCase names instead. For example, use `CalculateTotalPrice()` instead of `Calculate_Total_Price()`.
 * Prefer `var` delarations instead of left-hand side type declaration.
 * When left-hand side type declaration is used, use the short `new()` statement on the right-hand side, instead of repeating the type name.
-* When breaking a line, break before an operator, such as `.`, `+`, `&&`, `||`, etc. But don't break lines shorter than 120 characters.
+* When breaking a line, break before an operator, such as `.`, `+`, `&&`, `||`, etc. But don't break lines shorter than 150 characters.
 * Do not add 'Async' suffix to method names, unless both synchronous and asynchronous versions of the method exist.
 
 ### Ordering rules
