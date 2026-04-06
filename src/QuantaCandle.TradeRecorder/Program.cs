@@ -89,12 +89,13 @@ static async Task<int> Run(string[] args)
         await AwaitHotkeyListener(hotkeyListenerTask).ConfigureAwait(false);
     }
 
-    var stats = ioc.GetInstance<TradePipelineStats>();
+    var stats = container.GetInstance<TradePipelineStats>();
     var msg = TradePipelineStatsLogFormatter.Format(stats.GetSnapshot());
 
+    var log = container.GetInstance<ILogMachina<TradeCollectorHostedService>>();
     log.Info(msg);
 
-    log.Info("Trade Recorder execution completed successfully.");
+    Console.WriteLine("Trade collection completed successfully.");
 
     return 0;
 }

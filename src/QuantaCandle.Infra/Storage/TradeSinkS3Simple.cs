@@ -63,16 +63,85 @@ public sealed class TradeSinkS3Simple : ITradeSink
             list.Add(trade);
         }
 
-        foreach (var pair in byPath)
+    /// <summary>
+    /// Persists active-day checkpoints when due and finalizes any completed UTC days.
+    /// </summary>
+    public async ValueTask<bool> CheckpointActive(CancellationToken cancellationToken)
+    {
+        var result = false;
+
+        if (clock.UtcNow >= nextCheckpointAtUtc)
+        {
+            await stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (clock.UtcNow >= nextCheckpointAtUtc)
+                {
+                    var currentUtcDate = DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
+                    log.Info($"{CheckpointTickLogPrefix}: now={clock.UtcNow:O}, activeUtcDate={currentUtcDate:yyyy-MM-dd}.");
+                    await PersistBufferedDays(currentUtcDate, cancellationToken).ConfigureAwait(false);
+                    await UploadCompletedDays(currentUtcDate, cancellationToken).ConfigureAwait(false);
+                    nextCheckpointAtUtc = clock.UtcNow + options.CheckpointInterval;
+                    result = true;
+                }
+            }
+            finally
+            {
+                stateGate.Release();
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Flushes all active in-memory day buffers to local daily files without uploading incomplete days to S3.
+    /// </summary>
+    public async ValueTask FlushOnShutdown(CancellationToken cancellationToken)
+    {
+        await stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var currentUtcDate = DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
+            await PersistBufferedDays(currentUtcDate, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            stateGate.Release();
+        }
+    }
+
+    private async Task<List<TradeInfo>> GetOrCreateBufferAsync((Instrument Instrument, DateOnly UtcDate) key, CancellationToken cancellationToken)
+    {
+        if (!bufferedTradesByDay.TryGetValue(key, out var result))
+        {
+            var localPath = TradeLocalDailyFilePath.Build(options.LocalRootDirectory, key.Instrument, key.UtcDate);
+            var recoveredTrades = await TradeJsonlFile.ReadTradesAsync(localPath, cancellationToken).ConfigureAwait(false);
+            result = recoveredTrades.ToList();
+            bufferedTradesByDay[key] = result;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Writes every buffered instrument-day payload to its deterministic local checkpoint file.
+    /// </summary>
+    private async Task PersistBufferedDays(DateOnly currentUtcDate, CancellationToken cancellationToken)
+    {
+        var orderedKeys = bufferedTradesByDay.Keys
+            .OrderBy(item => item.Instrument.ToString(), StringComparer.Ordinal)
+            .ThenBy(item => item.UtcDate)
+            .ToList();
+
+        foreach (var key in orderedKeys)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var payload = TradeJsonlFile.BuildPayload(pair.Value);
-            await TradeJsonlFile.AppendPayloadAsync(pair.Key, payload, cancellationToken).ConfigureAwait(false);
-        }
-
-        var currentUtcDate = DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime);
-        await UploadCompletedDays(currentUtcDate, cancellationToken).ConfigureAwait(false);
+            var sortedTrades = bufferedTradesByDay[key]
+                .OrderBy(trade => trade.Timestamp)
+                .ThenBy(trade => trade.Key.TradeId, StringComparer.Ordinal)
+                .ToList();
 
         return new TradeAppendResult(insertedCount, DuplicateCount: 0);
     }
