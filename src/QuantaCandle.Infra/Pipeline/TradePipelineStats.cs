@@ -1,50 +1,47 @@
-using System;
-using System.Threading;
-
 namespace QuantaCandle.Infra.Pipeline;
 
 public sealed class TradePipelineStats
 {
-    private long tradesReceived;
-    private long tradesWritten;
-    private long duplicatesDropped;
-    private long batchesFlushed;
+    private long _tradesReceived;
+    private long _tradesWritten;
+    private long _duplicatesDropped;
+    private long _batchesFlushed;
 
-    private long minUtcTicks;
-    private long maxUtcTicks;
+    private long _minUtcTicks;
+    private long _maxUtcTicks;
 
     public TradePipelineStats()
     {
-        minUtcTicks = long.MaxValue;
-        maxUtcTicks = long.MinValue;
+        _minUtcTicks = long.MaxValue;
+        _maxUtcTicks = long.MinValue;
     }
 
     public void OnTradeReceived(DateTimeOffset timestamp)
     {
-        Interlocked.Increment(ref tradesReceived);
+        Interlocked.Increment(ref _tradesReceived);
         UpdateMinMax(timestamp.UtcTicks);
     }
 
     public void OnBatchFlushed(int insertedCount)
     {
-        Interlocked.Increment(ref batchesFlushed);
-        Interlocked.Add(ref tradesWritten, insertedCount);
+        Interlocked.Increment(ref _batchesFlushed);
+        Interlocked.Add(ref _tradesWritten, insertedCount);
     }
 
     public void OnDuplicateDropped()
     {
-        Interlocked.Increment(ref duplicatesDropped);
+        Interlocked.Increment(ref _duplicatesDropped);
     }
 
     public TradePipelineStatsSnapshot GetSnapshot()
     {
-        long received = Interlocked.Read(ref tradesReceived);
-        long written = Interlocked.Read(ref tradesWritten);
-        long dropped = Interlocked.Read(ref duplicatesDropped);
-        long flushed = Interlocked.Read(ref batchesFlushed);
+        var received = Interlocked.Read(ref _tradesReceived);
+        var written = Interlocked.Read(ref _tradesWritten);
+        var dropped = Interlocked.Read(ref _duplicatesDropped);
+        var flushed = Interlocked.Read(ref _batchesFlushed);
 
-        long min = Interlocked.Read(ref minUtcTicks);
-        long max = Interlocked.Read(ref maxUtcTicks);
+        var min = Interlocked.Read(ref _minUtcTicks);
+        var max = Interlocked.Read(ref _maxUtcTicks);
 
         DateTimeOffset? minTimestamp = min == long.MaxValue ? null : new DateTimeOffset(min, TimeSpan.Zero);
         DateTimeOffset? maxTimestamp = max == long.MinValue ? null : new DateTimeOffset(max, TimeSpan.Zero);
@@ -54,10 +51,10 @@ public sealed class TradePipelineStats
 
     private void UpdateMinMax(long utcTicks)
     {
-        long currentMin = Volatile.Read(ref minUtcTicks);
+        var currentMin = Volatile.Read(ref _minUtcTicks);
         while (utcTicks < currentMin)
         {
-            long previous = Interlocked.CompareExchange(ref minUtcTicks, utcTicks, currentMin);
+            var previous = Interlocked.CompareExchange(ref _minUtcTicks, utcTicks, currentMin);
             if (previous == currentMin)
             {
                 break;
@@ -66,10 +63,10 @@ public sealed class TradePipelineStats
             currentMin = previous;
         }
 
-        long currentMax = Volatile.Read(ref maxUtcTicks);
+        var currentMax = Volatile.Read(ref _maxUtcTicks);
         while (utcTicks > currentMax)
         {
-            long previous = Interlocked.CompareExchange(ref maxUtcTicks, utcTicks, currentMax);
+            long previous = Interlocked.CompareExchange(ref _maxUtcTicks, utcTicks, currentMax);
             if (previous == currentMax)
             {
                 break;

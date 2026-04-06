@@ -14,7 +14,7 @@ public sealed class TradeIngestWorker(
     TradePipelineStats stats,
     ILogMachina<TradeIngestWorker> log)
 {
-    private readonly ITradeSinkLifecycle? tradeSinkLifecycle = tradeSink as ITradeSinkLifecycle;
+    private readonly ITradeSinkLifecycle? _tradeSinkLifecycle = tradeSink as ITradeSinkLifecycle;
 
     public async Task Run(ChannelReader<TradeInfo> reader, CollectorOptions options, CancellationToken stoppingToken)
     {
@@ -134,16 +134,20 @@ public sealed class TradeIngestWorker(
     /// <summary>
     /// Runs any due sink checkpoint work without coupling the worker to a specific sink implementation.
     /// </summary>
-    private ValueTask CheckpointSink(CancellationToken cancellationToken)
+    private async ValueTask CheckpointSink(CancellationToken cancellationToken)
     {
-        var result = ValueTask.CompletedTask;
+        var checkpointCompleted = false;
 
-        if (tradeSinkLifecycle is not null)
+        if (_tradeSinkLifecycle is not null)
         {
-            result = tradeSinkLifecycle.CheckpointActive(cancellationToken);
+            checkpointCompleted = await _tradeSinkLifecycle.CheckpointActive(cancellationToken).ConfigureAwait(false);
         }
 
-        return result;
+        if (checkpointCompleted)
+        {
+            var msg = TradePipelineStatsLogFormatter.Format(stats.GetSnapshot());
+            log.Info(msg);
+        }
     }
 
     /// <summary>
@@ -153,9 +157,9 @@ public sealed class TradeIngestWorker(
     {
         var result = ValueTask.CompletedTask;
 
-        if (tradeSinkLifecycle is not null)
+        if (_tradeSinkLifecycle is not null)
         {
-            result = tradeSinkLifecycle.FlushOnShutdown(cancellationToken);
+            result = _tradeSinkLifecycle.FlushOnShutdown(cancellationToken);
         }
 
         return result;
