@@ -75,29 +75,32 @@ public sealed class TradeSinkS3Simple : ITradeSink, ITradeSinkLifecycle
     /// <summary>
     /// Persists active-day checkpoints when due and finalizes any completed UTC days.
     /// </summary>
-    public async ValueTask CheckpointActive(CancellationToken cancellationToken)
+    public async ValueTask<bool> CheckpointActive(CancellationToken cancellationToken)
     {
-        if (clock.UtcNow < nextCheckpointAtUtc)
-        {
-            return;
-        }
+        var result = false;
 
-        await stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        if (clock.UtcNow >= nextCheckpointAtUtc)
         {
-            if (clock.UtcNow >= nextCheckpointAtUtc)
+            await stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                var currentUtcDate = DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
-                log.Info($"{CheckpointTickLogPrefix}: now={clock.UtcNow:O}, activeUtcDate={currentUtcDate:yyyy-MM-dd}.");
-                await PersistBufferedDays(currentUtcDate, cancellationToken).ConfigureAwait(false);
-                await UploadCompletedDays(currentUtcDate, cancellationToken).ConfigureAwait(false);
-                nextCheckpointAtUtc = clock.UtcNow + options.CheckpointInterval;
+                if (clock.UtcNow >= nextCheckpointAtUtc)
+                {
+                    var currentUtcDate = DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
+                    log.Info($"{CheckpointTickLogPrefix}: now={clock.UtcNow:O}, activeUtcDate={currentUtcDate:yyyy-MM-dd}.");
+                    await PersistBufferedDays(currentUtcDate, cancellationToken).ConfigureAwait(false);
+                    await UploadCompletedDays(currentUtcDate, cancellationToken).ConfigureAwait(false);
+                    nextCheckpointAtUtc = clock.UtcNow + options.CheckpointInterval;
+                    result = true;
+                }
+            }
+            finally
+            {
+                stateGate.Release();
             }
         }
-        finally
-        {
-            stateGate.Release();
-        }
+
+        return result;
     }
 
     /// <summary>
