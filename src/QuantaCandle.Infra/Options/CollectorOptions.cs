@@ -9,5 +9,6 @@ public sealed record CollectorOptions(
     int ChannelCapacity,
     int BatchSize,
     TimeSpan FlushInterval,
+    TimeSpan CheckpointInterval,
     int? MaxTradesPerSecond = null,
     int DeduplicationCapacity = 100_000);

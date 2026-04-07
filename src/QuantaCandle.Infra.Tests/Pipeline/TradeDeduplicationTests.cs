@@ -14,7 +14,7 @@ public sealed class TradeDeduplicationTests
 {
     private readonly List<IReadOnlyList<TradeInfo>> _appends = new();
     private readonly TradePipelineStats _stats = new();
-    private readonly CollectorOptions _options = new CollectorOptions(["BTC-USDT"], 10, 1000, TimeSpan.FromHours(1), 100);
+    private readonly CollectorOptions _options = new CollectorOptions(["BTC-USDT"], 10, 1000, TimeSpan.FromHours(1), TimeSpan.FromHours(1), 100);
     private readonly TradeIngestWorker _worker;
     private readonly DateTimeOffset _t0 = new(2026, 3, 12, 0, 0, 0, TimeSpan.Zero);
 
@@ -84,6 +84,7 @@ public sealed class TradeDeduplicationTests
             ChannelCapacity: 10,
             BatchSize: 10,
             FlushInterval: TimeSpan.FromHours(1),
+            CheckpointInterval: TimeSpan.FromHours(1),
             DeduplicationCapacity: 2);
 
         var deduplicator = new InMemoryTradeDeduplicator(testOptions);
@@ -148,7 +149,7 @@ public sealed class TradeDeduplicationTests
         var deduplicator = new InMemoryTradeDeduplicator(options);
         var logMoq = new Mock<ILogMachina<TradeIngestWorker>>();
 
-        var worker = new TradeIngestWorker(tradeSinkMoq.Object, stateStoreMoq.Object, deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(tradeSinkMoq.Object, stateStoreMoq.Object, new CheckpointSignal(), new NullTradeCheckpointLifecycle(), deduplicator, stats, logMoq.Object);
         return worker;
     }
 

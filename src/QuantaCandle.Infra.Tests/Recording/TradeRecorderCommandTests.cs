@@ -39,6 +39,31 @@ public sealed class TradeRecorderCommandTests
     }
 
     [Fact]
+    public void ParsesCheckpointIntervalOption()
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+            "--checkpointInterval", "15m",
+        ]);
+
+        Assert.Equal(TimeSpan.FromMinutes(15), options.CollectorOptions.CheckpointInterval);
+    }
+
+    [Fact]
+    public void DefaultsCheckpointIntervalToOneHour()
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+        ]);
+
+        Assert.Equal(TimeSpan.FromHours(1), options.CollectorOptions.CheckpointInterval);
+    }
+
+    [Fact]
     public void ParsesS3RecorderOptionsWithDeterministicLocalRootAndCheckpointInterval()
     {
         var options = TradeRecorderCommand.Parse(
@@ -53,6 +78,7 @@ public sealed class TradeRecorderCommandTests
         Assert.NotNull(options.SinkRegistration.S3Options);
         Assert.Equal("local-trades", options.SinkRegistration.S3Options.LocalRootDirectory);
         Assert.Equal(TimeSpan.FromHours(1), options.SinkRegistration.S3Options.CheckpointInterval);
+        Assert.Equal(TimeSpan.FromHours(1), options.CollectorOptions.CheckpointInterval);
     }
 
     [Fact]
@@ -81,6 +107,7 @@ public sealed class TradeRecorderCommandTests
         var help = writer.ToString();
 
         Assert.Contains("[--duration 10m]", help, StringComparison.Ordinal);
+        Assert.Contains("[--checkpointInterval 1h]", help, StringComparison.Ordinal);
         Assert.Contains("Omit --duration to keep recording until the host or process is stopped.", help, StringComparison.Ordinal);
     }
 }

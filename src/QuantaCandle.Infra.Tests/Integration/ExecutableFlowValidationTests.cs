@@ -70,6 +70,7 @@ public sealed class ExecutableFlowValidationTests
             ChannelCapacity: 1_024,
             BatchSize: 1,
             FlushInterval: TimeSpan.FromMilliseconds(100),
+            CheckpointInterval: TimeSpan.FromMilliseconds(100),
             MaxTradesPerSecond: 20);
         var stats = new TradePipelineStats();
         var stateStore = new InMemoryIngestionStateStore();
@@ -81,7 +82,7 @@ public sealed class ExecutableFlowValidationTests
             .SetupGet(mock => mock.UtcNow)
             .Returns(new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero));
 
-        var worker = new TradeIngestWorker(sink, stateStore, deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(sink, stateStore, new CheckpointSignal(), new NullTradeCheckpointLifecycle(), deduplicator, stats, logMoq.Object);
         var source = new TradeSourceStub(new TradeSourceStubOptions(new ExchangeId("Stub"), 20, 50_000m, 0.01m, 0.001m), clockMoq.Object);
 
         using var sourceCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1_500));

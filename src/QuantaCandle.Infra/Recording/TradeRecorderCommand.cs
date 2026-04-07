@@ -52,6 +52,7 @@ public static class TradeRecorderCommand
         var capacity = GetIntOption(options, "capacity", 10_000);
         var batchSize = GetIntOption(options, "batchSize", 500);
         var flushInterval = GetDurationOption(options, "flushInterval", TimeSpan.FromSeconds(1));
+        var checkpointInterval = GetDurationOption(options, "checkpointInterval", TimeSpan.FromHours(1));
         var tradesPerSecond = GetIntOption(options, "rate", 10);
         var outputDir = GetStringOption(options, "outDir", "trades-out");
         var s3Prefix = GetStringOptionOrEnvironment(options, "s3Prefix", "QUANTA_CANDLE_S3_PREFIX", "QUANTA_S3_PREFIX", "S3_PREFIX");
@@ -62,6 +63,7 @@ public static class TradeRecorderCommand
             ChannelCapacity: capacity,
             BatchSize: batchSize,
             FlushInterval: flushInterval,
+            CheckpointInterval: checkpointInterval,
             MaxTradesPerSecond: tradesPerSecond);
         var retryOptions = new RetryOptions(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30));
 
@@ -85,8 +87,8 @@ public static class TradeRecorderCommand
         writer.WriteLine("QuantaCandle.TradeRecorder");
         writer.WriteLine();
         writer.WriteLine("Usage:");
-        writer.WriteLine("  --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file|s3] [--outDir trades-out]");
-        writer.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--sink null|file|s3] [--outDir trades-out]");
+        writer.WriteLine("  --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--sink null|file|s3] [--outDir trades-out]");
+        writer.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--sink null|file|s3] [--outDir trades-out]");
         writer.WriteLine("    Omit --duration to keep recording until the host or process is stopped.");
         writer.WriteLine("    S3 sink options: --s3Bucket my-bucket [--s3Prefix trades/raw] (env: QUANTA_CANDLE_S3_BUCKET, QUANTA_CANDLE_S3_PREFIX)");
         writer.WriteLine("    Binance options: [--binanceWsBase wss://stream.binance.com:9443] (try wss://stream.binance.us:9443 in the US)");

@@ -26,6 +26,17 @@ public static class TradeLocalDailyFilePath
     }
 
     /// <summary>
+    /// Builds the local scratch JSONL path for one instrument.
+    /// </summary>
+    public static string BuildScratch(string localRootDirectory, Instrument instrument)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(localRootDirectory);
+
+        var result = Path.Combine(localRootDirectory, instrument.ToString(), "qc-scratch.jsonl");
+        return result;
+    }
+
+    /// <summary>
     /// Discovers completed local day files across all instrument folders beneath the local root directory.
     /// </summary>
     public static IReadOnlyList<CompletedDayLocalFile> DiscoverCompleted(string localRootDirectory, DateOnly activeUtcDate)

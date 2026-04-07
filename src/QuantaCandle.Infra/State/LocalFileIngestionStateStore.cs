@@ -6,7 +6,7 @@ using QuantaCandle.Core.Trading;
 namespace QuantaCandle.Infra;
 
 /// <summary>
-/// Restores startup resume watermarks from local daily trade files and keeps runtime updates in memory.
+/// Restores startup resume watermarks from local trade files, including scratch checkpoints, and keeps runtime updates in memory.
 /// </summary>
 public sealed class LocalFileIngestionStateStore(string localRootDirectory, IClock clock) : IIngestionStateStore
 {
