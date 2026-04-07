@@ -91,22 +91,21 @@ public static class TradeJsonlFile
         {
             var candidateFiles = Directory
                 .EnumerateFiles(instrumentDirectory, "*.jsonl", SearchOption.TopDirectoryOnly)
-                .Select(path => new
-                {
-                    Path = path,
-                    UtcDate = TryParseUtcDate(Path.GetFileNameWithoutExtension(path)),
-                })
-                .Where(item => item.UtcDate is not null)
-                .OrderByDescending(item => item.UtcDate)
                 .ToList();
 
             foreach (var candidateFile in candidateFiles)
             {
-                var resumeBoundary = await TryReadLatestResumeBoundaryFromFileAsync(candidateFile.Path, cancellationToken).ConfigureAwait(false);
-                if (resumeBoundary is not null)
+                var origin = GetResumeBoundaryOrigin(candidateFile);
+                if (origin is null)
+                {
+                    continue;
+                }
+
+                var resumeBoundary = await TryReadLatestResumeBoundaryFromFileAsync(candidateFile, origin, cancellationToken).ConfigureAwait(false);
+                if (resumeBoundary is not null
+                    && (result is null || resumeBoundary.Value.TimestampUtc >= result.Value.TimestampUtc))
                 {
                     result = resumeBoundary;
-                    break;
                 }
             }
         }
@@ -134,7 +133,44 @@ public static class TradeJsonlFile
         await File.WriteAllTextAsync(path, payload, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<ResumeBoundary?> TryReadLatestResumeBoundaryFromFileAsync(string path, CancellationToken cancellationToken)
+    /// <summary>
+    /// Appends the supplied payload to the specified JSONL file path.
+    /// </summary>
+    public static async Task AppendPayloadAsync(string path, string payload, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(payload))
+        {
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await File.AppendAllTextAsync(path, payload, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Rewrites the specified JSONL file with the supplied payload, or deletes it when the payload is empty.
+    /// </summary>
+    public static async Task RewritePayloadAsync(string path, string payload, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(payload))
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+
+            return;
+        }
+
+        await WriteFullPayloadAsync(path, payload, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<ResumeBoundary?> TryReadLatestResumeBoundaryFromFileAsync(string path, string origin, CancellationToken cancellationToken)
     {
         ResumeBoundary? result = null;
         string[] lines = await File.ReadAllLinesAsync(path, cancellationToken).ConfigureAwait(false);
@@ -154,8 +190,25 @@ public static class TradeJsonlFile
 
             if (result is null || utcTimestamp >= result.Value.TimestampUtc)
             {
-                result = new ResumeBoundary(utcTimestamp, utcDate, "LatestLocalDailyFile");
+                result = new ResumeBoundary(utcTimestamp, utcDate, origin);
             }
+        }
+
+        return result;
+    }
+
+    private static string? GetResumeBoundaryOrigin(string path)
+    {
+        string? result = null;
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(path);
+
+        if (string.Equals(fileNameWithoutExtension, "qc-scratch", StringComparison.OrdinalIgnoreCase))
+        {
+            result = "LatestScratchFile";
+        }
+        else if (TryParseUtcDate(fileNameWithoutExtension) is not null)
+        {
+            result = "LatestLocalDailyFile";
         }
 
         return result;

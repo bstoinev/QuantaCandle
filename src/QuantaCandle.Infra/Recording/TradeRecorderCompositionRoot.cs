@@ -1,5 +1,6 @@
 using Amazon.S3;
 
+using LogMachina;
 using LogMachina.SimpleInjector;
 
 using QuantaCandle.Core;
@@ -31,6 +32,9 @@ public static class TradeRecorderCompositionRoot
         container.RegisterInstance(options.RetryOptions);
 
         container.RegisterSingleton<IClock, SystemClock>();
+        container.RegisterSingleton<ICheckpointSignal, CheckpointSignal>();
+        container.RegisterSingleton<IConsoleKeyReader, SystemConsoleKeyReader>();
+        container.RegisterSingleton<ConsoleCheckpointHotkeyListener>();
         container.RegisterSingleton<TradePipelineStats>();
         container.RegisterSingleton<ITradeDeduplicator, InMemoryTradeDeduplicator>();
 
@@ -63,6 +67,7 @@ public static class TradeRecorderCompositionRoot
             var fileOptions = tradeSinkRegistration.FileOptions;
             container.RegisterInstance(fileOptions);
             container.RegisterSingleton<IIngestionStateStore>(() => new LocalFileIngestionStateStore(fileOptions.OutputDirectory, container.GetInstance<IClock>()));
+            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(fileOptions.OutputDirectory, container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
             container.RegisterSingleton<ITradeSink, TradeSinkFileSimple>();
         }
         else if (tradeSinkRegistration.S3Options is not null)
@@ -72,11 +77,13 @@ public static class TradeRecorderCompositionRoot
             container.RegisterSingleton<IAmazonS3>(() => new AmazonS3Client());
             container.RegisterSingleton<IS3ObjectUploader, AwsS3Uploader>();
             container.RegisterSingleton<IIngestionStateStore>(() => new LocalFileIngestionStateStore(s3Options.LocalRootDirectory, container.GetInstance<IClock>()));
+            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(s3Options.LocalRootDirectory, container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
             container.RegisterSingleton<ITradeSink, TradeSinkS3Simple>();
         }
         else
         {
             container.RegisterSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
+            container.RegisterSingleton<ITradeCheckpointLifecycle, NullTradeCheckpointLifecycle>();
             container.RegisterSingleton<ITradeSink, TradeSinkNull>();
         }
     }

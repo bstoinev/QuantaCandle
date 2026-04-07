@@ -3,6 +3,7 @@ using SimpleInjector;
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Infra.Options;
+using QuantaCandle.Infra.Pipeline;
 using QuantaCandle.Infra.Recording;
 
 namespace QuantaCandle.Infra.Tests.Recording;
@@ -23,7 +24,7 @@ public sealed class TradeRecorderCompositionRootTests
         {
             using var container = new Container();
             var options = new TradeRecorderRunOptions(Duration: null,
-                new CollectorOptions(Instruments: ["BTC-USDT"], ChannelCapacity: 100, BatchSize: 100,  FlushInterval: TimeSpan.FromSeconds(1)),
+                new CollectorOptions(Instruments: ["BTC-USDT"], ChannelCapacity: 100, BatchSize: 100, FlushInterval: TimeSpan.FromSeconds(1), CheckpointInterval: TimeSpan.FromHours(1)),
                 new RetryOptions(InitialDelay: TimeSpan.FromMilliseconds(100), MaxDelay: TimeSpan.FromSeconds(5)),
                 new TradeRecorderSourceRegistration(BinanceOptions: null,
                     StubOptions: new TradeSourceStubOptions(Exchange: new ExchangeId("Stub"), TradesPerSecond: 1, StartPrice: 50_000m, PriceStep: 0.01m, Quantity: 0.001m)),
@@ -34,10 +35,12 @@ public sealed class TradeRecorderCompositionRootTests
             container.Verify();
 
             var ingestionStateStore = container.GetInstance<IIngestionStateStore>();
+            var checkpointLifecycle = container.GetInstance<ITradeCheckpointLifecycle>();
             var uploader = container.GetInstance<IS3ObjectUploader>();
             var sink = container.GetInstance<ITradeSink>();
 
             Assert.IsType<LocalFileIngestionStateStore>(ingestionStateStore);
+            Assert.IsType<TradeScratchCheckpointLifecycle>(checkpointLifecycle);
             Assert.IsType<AwsS3Uploader>(uploader);
             Assert.IsType<TradeSinkS3Simple>(sink);
         }

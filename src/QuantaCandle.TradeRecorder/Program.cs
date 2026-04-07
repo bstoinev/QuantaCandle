@@ -59,6 +59,8 @@ static async Task<int> Run(string[] args)
     }
 
     var log = ioc.GetInstance<ILogMachina<TradeCollectorHostedService>>();
+    var hotkeyListener = ioc.GetInstance<ConsoleCheckpointHotkeyListener>();
+    var hotkeyListenerTask = hotkeyListener.Run(stopCts.Token);
 
     var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
     lifetime.ApplicationStarted.Register(() =>
@@ -84,6 +86,7 @@ static async Task<int> Run(string[] args)
     finally
     {
         await host.StopAsync(CancellationToken.None).ConfigureAwait(false);
+        await AwaitHotkeyListener(hotkeyListenerTask).ConfigureAwait(false);
     }
 
     var stats = ioc.GetInstance<TradePipelineStats>();
@@ -94,4 +97,15 @@ static async Task<int> Run(string[] args)
     log.Info("Trade Recorder execution completed successfully.");
 
     return 0;
+}
+
+static async Task AwaitHotkeyListener(Task hotkeyListenerTask)
+{
+    try
+    {
+        await hotkeyListenerTask.ConfigureAwait(false);
+    }
+    catch (OperationCanceledException)
+    {
+    }
 }
