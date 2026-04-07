@@ -39,34 +39,39 @@ static async Task<int> Run(string[] args)
         stopCts.Cancel();
     };
 
-    var container = new Container();
+    var ioc = new Container();
 
     using IHost host = Host.CreateDefaultBuilder()
-        .ConfigureLogging(builder =>
-        {
-            builder.ClearProviders();
-            builder.AddSimpleConsole(options =>
-            {
-                options.SingleLine = true;
-                options.TimestampFormat = "HH:mm:ss ";
-            });
-        })
-        .ConfigureServices(services => services.AddSimpleInjector(container, simpleInjector => simpleInjector.AddHostedService<TradeCollectorHostedService>()))
+        .ConfigureLogging(builder => builder.ClearProviders())
+        .ConfigureServices(services => services.AddSimpleInjector(ioc, simpleInjector => simpleInjector.AddHostedService<TradeCollectorHostedService>()))
         .UseConsoleLifetime()
         .Build();
 
-    host.UseSimpleInjector(container);
+    host.UseSimpleInjector(ioc);
 
-    TradeRecorderCompositionRoot.Configure(container, runOptions);
+    TradeRecorderCompositionRoot.Configure(ioc, runOptions);
 
-    container.Verify();
-
-    await host.StartAsync(stopCts.Token).ConfigureAwait(false);
+    ioc.Verify();
 
     if (runOptions.Duration is { } duration)
     {
         stopCts.CancelAfter(duration);
     }
+
+    var log = ioc.GetInstance<ILogMachina<TradeCollectorHostedService>>();
+
+    var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+    lifetime.ApplicationStarted.Register(() =>
+    {
+        var env = host.Services.GetRequiredService<IHostEnvironment>();
+        var ver = typeof(Program).Assembly.GetName().Version;
+
+        log.Info($"Trade Recorder {ver} started successfully.");
+        log.Info($"Environment: {env.EnvironmentName}");
+        log.Info("Press Ctrl+C to shut down.");
+    });
+
+    await host.StartAsync(stopCts.Token).ConfigureAwait(false);
 
     try
     {
@@ -81,13 +86,12 @@ static async Task<int> Run(string[] args)
         await host.StopAsync(CancellationToken.None).ConfigureAwait(false);
     }
 
-    var stats = container.GetInstance<TradePipelineStats>();
+    var stats = ioc.GetInstance<TradePipelineStats>();
     var msg = TradePipelineStatsLogFormatter.Format(stats.GetSnapshot());
 
-    var log = container.GetInstance<ILogMachina<TradeCollectorHostedService>>();
     log.Info(msg);
 
-    Console.WriteLine("Trade collection completed successfully.");
+    log.Info("Trade Recorder execution completed successfully.");
 
     return 0;
 }

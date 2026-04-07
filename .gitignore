@@ -59,11 +59,7 @@ tmp-trades-out*/*
 .env
 .env.*
 
-# Google Drive sync folders
-.tmp.drivedownload
-.tmp.driveupload
-
 # Test output
 tmp-e2e/*
 /tmp-trades/*
-/src/QuantaCandle.CandleGenerator/Properties/launchSettings.json
+launchSettings.json
