@@ -9,6 +9,8 @@ namespace QuantaCandle.Infra.Pipeline;
 /// </summary>
 public sealed class TradeScratchCheckpointLifecycle(
     string localRootDirectory,
+    ITradeCheckpointBatchPreparator checkpointBatchPreparator,
+    IIngestionStateStore ingestionStateStore,
     ILogMachina<TradeScratchCheckpointLifecycle> log) : ITradeCheckpointLifecycle
 {
     private readonly Lock _gate = new();
@@ -62,13 +64,21 @@ public sealed class TradeScratchCheckpointLifecycle(
 
             var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRootDirectory, pair.Key.Symbol);
             var existingScratchTrades = await TradeJsonlFile.ReadTradesAsync(scratchPath, cancellationToken).ConfigureAwait(false);
-            var combinedPersistedTrades = existingScratchTrades
-                .Concat(pair.Value.TradesToPersist)
-                .OrderBy(trade => trade.Timestamp)
-                .ThenBy(trade => trade.Key.TradeId, StringComparer.Ordinal)
-                .ToArray();
+            var batchPreparation = await checkpointBatchPreparator
+                .Prepare(
+                    pair.Key.Exchange,
+                    pair.Key.Symbol,
+                    existingScratchTrades,
+                    pair.Value.TradesToPersist,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
-            await PersistScratchState(pair.Key.Symbol, scratchPath, combinedPersistedTrades, cancellationToken).ConfigureAwait(false);
+            foreach (var detectedGap in batchPreparation.DetectedGaps)
+            {
+                await ingestionStateStore.RecordGapAsync(detectedGap, cancellationToken).ConfigureAwait(false);
+            }
+
+            await PersistScratchState(pair.Key.Symbol, scratchPath, batchPreparation.PreparedTrades, cancellationToken).ConfigureAwait(false);
         }
 
         lock (_gate)
@@ -123,30 +133,30 @@ public sealed class TradeScratchCheckpointLifecycle(
     private async Task PersistScratchState(
         Instrument instrument,
         string scratchPath,
-        IReadOnlyList<TradeInfo> combinedPersistedTrades,
+        IReadOnlyList<TradeInfo> preparedTrades,
         CancellationToken cancellationToken)
     {
-        if (combinedPersistedTrades.Count == 0)
+        if (preparedTrades.Count == 0)
         {
             await TradeJsonlFile.RewritePayloadAsync(scratchPath, string.Empty, cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        var oldestUtcDate = DateOnly.FromDateTime(combinedPersistedTrades[0].Timestamp.UtcDateTime);
-        var newestUtcDate = DateOnly.FromDateTime(combinedPersistedTrades[^1].Timestamp.UtcDateTime);
+        var oldestUtcDate = DateOnly.FromDateTime(preparedTrades[0].Timestamp.UtcDateTime);
+        var newestUtcDate = DateOnly.FromDateTime(preparedTrades[^1].Timestamp.UtcDateTime);
 
         if (oldestUtcDate == newestUtcDate)
         {
-            var scratchPayload = TradeJsonlFile.BuildPayload(combinedPersistedTrades);
-            log.Info($"Trade scratch checkpoint write: instrument={instrument}, path={scratchPath}, tradeCount={combinedPersistedTrades.Count}.");
+            var scratchPayload = TradeJsonlFile.BuildPayload(preparedTrades);
+            log.Info($"Trade scratch checkpoint write: instrument={instrument}, path={scratchPath}, tradeCount={preparedTrades.Count}.");
             await TradeJsonlFile.RewritePayloadAsync(scratchPath, scratchPayload, cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        var finalizedTrades = combinedPersistedTrades
+        var finalizedTrades = preparedTrades
             .Where(trade => DateOnly.FromDateTime(trade.Timestamp.UtcDateTime) == oldestUtcDate)
             .ToArray();
-        var continuedScratchTrades = combinedPersistedTrades
+        var continuedScratchTrades = preparedTrades
             .Where(trade => DateOnly.FromDateTime(trade.Timestamp.UtcDateTime) > oldestUtcDate)
             .ToArray();
         var finalizedPath = TradeLocalDailyFilePath.Build(localRootDirectory, instrument, oldestUtcDate);

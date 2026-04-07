@@ -17,7 +17,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
         try
         {
-            var lifecycle = CreateLifecycle(localRoot);
+            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -37,16 +37,45 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
-    public async Task CheckpointExcludesLatestTradeFromPersistedScratch()
+    public async Task CheckpointBatchIsNormalizedBeforePersistence()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
-            var lifecycle = CreateLifecycle(localRoot);
+            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
+            ], CancellationToken.None);
+
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var payload = await File.ReadAllTextAsync(TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")), CancellationToken.None);
+            Assert.Equal(["1", "2", "3"], ParseTradeIds(payload));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task DuplicatesInsideCheckpointableRangeAreRemovedBeforePersistence()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var (lifecycle, _) = CreateLifecycle(localRoot);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
                 CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
                 CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
                 CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
@@ -64,13 +93,48 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
+    public async Task PersistedTailAndCheckpointableRangeBoundaryAreMergedWithoutDuplicates()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var (lifecycle, _) = CreateLifecycle(localRoot);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
+            ], CancellationToken.None);
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
+                CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
+                CreateTrade("5", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
+            ], CancellationToken.None);
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var payload = await File.ReadAllTextAsync(TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")), CancellationToken.None);
+            Assert.Equal(["1", "2", "3", "4"], ParseTradeIds(payload));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
     public async Task CheckpointCrossingUtcMidnightFinalizesOlderDateIntoDailyFile()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
-            var lifecycle = CreateLifecycle(localRoot);
+            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -92,16 +156,17 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
-    public async Task FinalizedDailyFileContainsOnlyOlderDateTrades()
+    public async Task CrossMidnightRolloverStillWorksAfterBatchPreparation()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
-            var lifecycle = CreateLifecycle(localRoot);
+            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
                 CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
                 CreateTrade("2", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
                 CreateTrade("3", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero)),
@@ -129,7 +194,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
         try
         {
-            var lifecycle = CreateLifecycle(localRoot);
+            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -154,13 +219,13 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
-    public async Task LatestTradeRemainsExcludedFromPersistenceAfterSplit()
+    public async Task LatestTradeIsStillExcludedFromPersistence()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
-            var lifecycle = CreateLifecycle(localRoot);
+            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -195,7 +260,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
         try
         {
-            var lifecycle = CreateLifecycle(localRoot);
+            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -232,7 +297,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
         try
         {
-            var lifecycle = CreateLifecycle(localRoot);
+            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -261,7 +326,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
         try
         {
-            var lifecycle = CreateLifecycle(localRoot);
+            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -281,11 +346,45 @@ public sealed class TradeScratchCheckpointLifecycleTests
         }
     }
 
-    private static TradeScratchCheckpointLifecycle CreateLifecycle(string localRoot)
+    [Fact]
+    public async Task MissingRangeGapIsRecordedButNotReconstructed()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var (lifecycle, stateStore) = CreateLifecycle(localRoot);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
+                CreateTrade("5", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
+            ], CancellationToken.None);
+
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var payload = await File.ReadAllTextAsync(TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")), CancellationToken.None);
+            var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), CancellationToken.None);
+
+            Assert.Equal(["1", "4"], ParseTradeIds(payload));
+            var gap = Assert.Single(gaps);
+            Assert.Equal(TradeGapStatus.Bounded, gap.Status);
+            Assert.Equal(new MissingTradeIdRange(2, 3), gap.MissingTradeIds);
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    private static (TradeScratchCheckpointLifecycle Lifecycle, InMemoryIngestionStateStore StateStore) CreateLifecycle(string localRoot)
     {
         var logMoq = new Mock<ILogMachina<TradeScratchCheckpointLifecycle>>();
-        var result = new TradeScratchCheckpointLifecycle(localRoot, logMoq.Object);
-        return result;
+        var stateStore = new InMemoryIngestionStateStore();
+        var preparator = new TradeCheckpointBatchPreparator();
+        var result = new TradeScratchCheckpointLifecycle(localRoot, preparator, stateStore, logMoq.Object);
+        return (result, stateStore);
     }
 
     private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp)
