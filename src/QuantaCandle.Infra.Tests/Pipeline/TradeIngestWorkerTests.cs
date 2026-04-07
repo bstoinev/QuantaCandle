@@ -69,8 +69,8 @@ public sealed class TradeIngestWorkerTests
     public async Task InvokesSinkShutdownFlushWhenLifecycleIsAvailable()
     {
         var options = CreateOptions(batchSize: 3);
-        var lifecycleSink = new RecordingLifecycleTradeSink();
-        var worker = CreateWorker(options, lifecycleSink, new InMemoryIngestionStateStore(), out _, out _);
+        var checkpointLifecycle = new RecordingCheckpointLifecycle();
+        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -86,13 +86,13 @@ public sealed class TradeIngestWorkerTests
     public async Task SuccessfulCheckpointLogsOneStatisticsMessage()
     {
         using var stoppingCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        var options = CreateOptions(batchSize: 3, flushInterval: TimeSpan.FromMilliseconds(25));
-        var lifecycleSink = new RecordingLifecycleTradeSink
+        var options = CreateOptions(batchSize: 3, checkpointInterval: TimeSpan.FromMilliseconds(25));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle
         {
             CheckpointResult = true,
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, lifecycleSink, new InMemoryIngestionStateStore(), out _, out var logMoq);
+        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -111,13 +111,13 @@ public sealed class TradeIngestWorkerTests
     public async Task CheckpointThatDoesNotCompleteDoesNotLogStatistics()
     {
         using var stoppingCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        var options = CreateOptions(batchSize: 3, flushInterval: TimeSpan.FromMilliseconds(25));
-        var lifecycleSink = new RecordingLifecycleTradeSink
+        var options = CreateOptions(batchSize: 3, checkpointInterval: TimeSpan.FromMilliseconds(25));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle
         {
             CheckpointResult = false,
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, lifecycleSink, new InMemoryIngestionStateStore(), out _, out var logMoq);
+        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -129,15 +129,57 @@ public sealed class TradeIngestWorkerTests
     public async Task NotReachedCheckpointDoesNotLogStatistics()
     {
         using var stoppingCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        var options = CreateOptions(batchSize: 3, flushInterval: TimeSpan.FromHours(1));
-        var lifecycleSink = new RecordingLifecycleTradeSink();
-        var worker = CreateWorker(options, lifecycleSink, new InMemoryIngestionStateStore(), out _, out var logMoq);
+        var options = CreateOptions(batchSize: 3, checkpointInterval: TimeSpan.FromHours(1));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle();
+        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
 
-        Assert.Equal(0, lifecycleSink.CheckpointCallCount);
+        Assert.Equal(0, checkpointLifecycle.CheckpointCallCount);
         logMoq.Verify(mock => mock.Info(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PeriodicCheckpointUsesCheckpointIntervalInsteadOfFlushInterval()
+    {
+        using var stoppingCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var options = CreateOptions(
+            batchSize: 3,
+            flushInterval: TimeSpan.FromMilliseconds(1),
+            checkpointInterval: TimeSpan.FromMilliseconds(25));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle
+        {
+            OnCheckpoint = stoppingCts.Cancel,
+        };
+        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        await worker.Run(channel.Reader, options, stoppingCts.Token);
+
+        Assert.Equal(1, checkpointLifecycle.CheckpointCallCount);
+    }
+
+    [Fact]
+    public async Task ManualCheckpointSignalCausesImmediateCheckpointWithoutWaitingForTimer()
+    {
+        using var stoppingCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var checkpointSignal = new CheckpointSignal();
+        var options = CreateOptions(batchSize: 3, checkpointInterval: TimeSpan.FromHours(1));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle
+        {
+            OnCheckpoint = stoppingCts.Cancel,
+        };
+        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), checkpointSignal, checkpointLifecycle, out _, out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        var run = worker.Run(channel.Reader, options, stoppingCts.Token);
+
+        checkpointSignal.Signal();
+
+        await run;
+
+        Assert.Equal(1, checkpointLifecycle.CheckpointCallCount);
     }
 
     [Fact]
@@ -308,13 +350,14 @@ public sealed class TradeIngestWorkerTests
             Times.Never);
     }
 
-    private static CollectorOptions CreateOptions(int batchSize, TimeSpan? flushInterval = null)
+    private static CollectorOptions CreateOptions(int batchSize, TimeSpan? flushInterval = null, TimeSpan? checkpointInterval = null)
     {
         var options = new CollectorOptions(
             Instruments: ["BTC-USDT"],
             ChannelCapacity: 10,
             BatchSize: batchSize,
-            FlushInterval: flushInterval ?? TimeSpan.FromHours(1));
+            FlushInterval: flushInterval ?? TimeSpan.FromHours(1),
+            CheckpointInterval: checkpointInterval ?? TimeSpan.FromHours(1));
         return options;
     }
 
@@ -336,13 +379,15 @@ public sealed class TradeIngestWorkerTests
                 return ValueTask.FromResult(new TradeAppendResult(InsertedCount: trades.Count, DuplicateCount: 0));
             });
 
-        return CreateWorker(options, tradeSinkMoq.Object, ingestionStateStore, out stats, out logMoq);
+        return CreateWorker(options, tradeSinkMoq.Object, ingestionStateStore, new CheckpointSignal(), new RecordingCheckpointLifecycle(), out stats, out logMoq);
     }
 
     private static TradeIngestWorker CreateWorker(
         CollectorOptions options,
         ITradeSink tradeSink,
         IIngestionStateStore ingestionStateStore,
+        ICheckpointSignal checkpointSignal,
+        ITradeCheckpointLifecycle tradeCheckpointLifecycle,
         out TradePipelineStats stats,
         out Mock<ILogMachina<TradeIngestWorker>> logMoq)
     {
@@ -350,7 +395,7 @@ public sealed class TradeIngestWorkerTests
         var deduplicator = new InMemoryTradeDeduplicator(options);
         logMoq = new Mock<ILogMachina<TradeIngestWorker>>();
 
-        var worker = new TradeIngestWorker(tradeSink, ingestionStateStore, deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(tradeSink, ingestionStateStore, checkpointSignal, tradeCheckpointLifecycle, deduplicator, stats, logMoq.Object);
 
         return worker;
     }
@@ -405,7 +450,7 @@ public sealed class TradeIngestWorkerTests
         }
     }
 
-    private sealed class RecordingTradeSink : ITradeSink
+    private sealed class RecordingCheckpointLifecycle : ITradeCheckpointLifecycle
     {
         public bool CheckpointResult { get; init; }
 
@@ -415,9 +460,12 @@ public sealed class TradeIngestWorkerTests
 
         public int ShutdownFlushCallCount { get; private set; }
 
-        public ValueTask<TradeAppendResult> Append(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+        public int TrackAppendedTradesCallCount { get; private set; }
+
+        public ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
         {
-            return ValueTask.FromResult(new TradeAppendResult(trades.Count, DuplicateCount: 0));
+            TrackAppendedTradesCallCount++;
+            return ValueTask.CompletedTask;
         }
 
         public ValueTask<bool> CheckpointActive(CancellationToken cancellationToken)
@@ -433,6 +481,14 @@ public sealed class TradeIngestWorkerTests
         {
             ShutdownFlushCallCount++;
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingTradeSink : ITradeSink
+    {
+        public ValueTask<TradeAppendResult> Append(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+        {
+            return ValueTask.FromResult(new TradeAppendResult(trades.Count, DuplicateCount: 0));
         }
     }
 }

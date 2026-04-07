@@ -16,14 +16,15 @@ public sealed class TradeIngestWorker(
     TradePipelineStats stats,
     ILogMachina<TradeIngestWorker> log)
 {
-    private readonly ITradeSinkLifecycle? _tradeSinkLifecycle = tradeSink as ITradeSinkLifecycle;
-
     public async Task Run(ChannelReader<TradeInfo> reader, CollectorOptions options, CancellationToken stoppingToken)
     {
         Task<bool>? waitToReadTask = null;
 
         var batch = new List<TradeInfo>(options.BatchSize);
-        using var timer = new PeriodicTimer(options.FlushInterval);
+        var gapDetector = new TradeGapDetector(ingestionStateStore);
+        using var timer = new PeriodicTimer(options.CheckpointInterval);
+        var manualCheckpointVersion = checkpointSignal.CurrentVersion;
+        var manualCheckpointTask = checkpointSignal.WaitForNextSignalAsync(manualCheckpointVersion, stoppingToken).AsTask();
         var tickTask = timer.WaitForNextTickAsync(stoppingToken).AsTask();
 
         try
@@ -150,12 +151,7 @@ public sealed class TradeIngestWorker(
     /// </summary>
     private async ValueTask CheckpointSink(CancellationToken cancellationToken)
     {
-        var checkpointCompleted = false;
-
-        if (_tradeSinkLifecycle is not null)
-        {
-            checkpointCompleted = await _tradeSinkLifecycle.CheckpointActive(cancellationToken).ConfigureAwait(false);
-        }
+        var checkpointCompleted = await tradeCheckpointLifecycle.CheckpointActive(cancellationToken).ConfigureAwait(false);
 
         if (checkpointCompleted)
         {
@@ -169,13 +165,7 @@ public sealed class TradeIngestWorker(
     /// </summary>
     private ValueTask FlushSinkOnShutdown(CancellationToken cancellationToken)
     {
-        var result = ValueTask.CompletedTask;
-
-        if (_tradeSinkLifecycle is not null)
-        {
-            result = _tradeSinkLifecycle.FlushOnShutdown(cancellationToken);
-        }
-
+        var result = tradeCheckpointLifecycle.FlushOnShutdown(cancellationToken);
         return result;
     }
 }
