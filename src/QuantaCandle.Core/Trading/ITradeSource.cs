@@ -1,6 +1,3 @@
-using System.Collections.Generic;
-using System.Threading;
-
 namespace QuantaCandle.Core.Trading;
 
 public interface ITradeSource
@@ -15,7 +12,7 @@ public interface ITradeSource
     /// - Throws <see cref="OperationCanceledException"/> when <paramref name="cancellationToken"/> is canceled.
     /// - Throws other exceptions for unrecoverable failures; transient errors may be handled by reconnecting.
     /// </remarks>
-    IAsyncEnumerable<TradeInfo> GetLiveTradesAsync(Instrument symbol, CancellationToken cancellationToken);
+    IAsyncEnumerable<TradeInfo> GetLiveTrades(Instrument symbol, CancellationToken cancellationToken);
 
     /// <summary>
     /// Returns historical trades after <paramref name="fromExclusive"/> (if provided), typically in ascending order.
@@ -25,5 +22,5 @@ public interface ITradeSource
     /// - Throws <see cref="OperationCanceledException"/> when <paramref name="cancellationToken"/> is canceled.
     /// - Throws exceptions for transport/protocol failures.
     /// </remarks>
-    IAsyncEnumerable<TradeInfo> GetBackfillTradesAsync(Instrument symbol, TradeWatermark? fromExclusive, CancellationToken cancellationToken);
+    IAsyncEnumerable<TradeInfo> GetBackfillTrades(Instrument symbol, TradeWatermark? fromExclusive, CancellationToken cancellationToken);
 }

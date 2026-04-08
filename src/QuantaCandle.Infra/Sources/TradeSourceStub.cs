@@ -27,7 +27,7 @@ public sealed class TradeSourceStub : ITradeSource
         }
     }
 
-    public async IAsyncEnumerable<TradeInfo> GetLiveTradesAsync(
+    public async IAsyncEnumerable<TradeInfo> GetLiveTrades(
         Instrument symbol,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -54,7 +54,7 @@ public sealed class TradeSourceStub : ITradeSource
         }
     }
 
-    public async IAsyncEnumerable<TradeInfo> GetBackfillTradesAsync(
+    public async IAsyncEnumerable<TradeInfo> GetBackfillTrades(
         Instrument symbol,
         TradeWatermark? fromExclusive,
         [EnumeratorCancellation] CancellationToken cancellationToken)

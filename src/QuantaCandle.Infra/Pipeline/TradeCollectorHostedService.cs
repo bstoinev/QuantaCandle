@@ -80,7 +80,7 @@ public sealed class TradeCollectorHostedService(
         {
             try
             {
-                await foreach (TradeInfo trade in tradeSource.GetLiveTradesAsync(instrument, stoppingToken))
+                await foreach (TradeInfo trade in tradeSource.GetLiveTrades(instrument, stoppingToken))
                 {
                     await writer.WriteAsync(trade, stoppingToken).ConfigureAwait(false);
                 }

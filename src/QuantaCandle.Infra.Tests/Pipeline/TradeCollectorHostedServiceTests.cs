@@ -74,7 +74,7 @@ public sealed class TradeCollectorHostedServiceTests
 
         public bool StartupCompletedWhenCollectionStarted { get; private set; }
 
-        public async IAsyncEnumerable<TradeInfo> GetLiveTradesAsync(Instrument instrument, [EnumeratorCancellation] CancellationToken cancellationToken)
+        public async IAsyncEnumerable<TradeInfo> GetLiveTrades(Instrument instrument, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             StartupCompletedWhenCollectionStarted = startupTask.Completed;
             CollectionStarted.TrySetResult();
@@ -90,7 +90,7 @@ public sealed class TradeCollectorHostedServiceTests
             yield break;
         }
 
-        public async IAsyncEnumerable<TradeInfo> GetBackfillTradesAsync(Instrument instrument, TradeWatermark? fromExclusive, [EnumeratorCancellation] CancellationToken cancellationToken)
+        public async IAsyncEnumerable<TradeInfo> GetBackfillTrades(Instrument instrument, TradeWatermark? fromExclusive, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await Task.CompletedTask;
             yield break;

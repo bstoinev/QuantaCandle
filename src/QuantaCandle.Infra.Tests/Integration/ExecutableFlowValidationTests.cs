@@ -120,7 +120,7 @@ public sealed class ExecutableFlowValidationTests
         Instrument instrument,
         CancellationToken cancellationToken)
     {
-        await foreach (var trade in source.GetLiveTradesAsync(instrument, cancellationToken).ConfigureAwait(false))
+        await foreach (var trade in source.GetLiveTrades(instrument, cancellationToken).ConfigureAwait(false))
         {
             await writer.WriteAsync(trade, cancellationToken);
         }
