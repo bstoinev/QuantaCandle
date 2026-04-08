@@ -5,13 +5,21 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>qc</AssemblyName>
+    <AssemblyName>QuantaCandle.CLI</AssemblyName>
     <RootNamespace>QuantaCandle.CLI</RootNamespace>
     <CliOutputName>qc</CliOutputName>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+
   <ItemGroup>
+    <PackageReference Include="LogMachina.NLog" Version="1.1.0" />
+    <PackageReference Include="SimpleInjector" Version="5.5.0" />
     <ProjectReference Include="..\QuantaCandle.Infra\QuantaCandle.Infra.csproj" />
+    <ProjectReference Include="..\QuantaCandle.Exchange.Binance\QuantaCandle.Exchange.Binance.csproj" />
   </ItemGroup>
 
   <Target Name="RenameWindowsAppHostAfterBuild" AfterTargets="Build" Condition="'$(UseAppHost)' == 'true' and '$(_NativeExecutableExtension)' == '.exe' and Exists('$(TargetDir)$(AssemblyName)$(_NativeExecutableExtension)')">

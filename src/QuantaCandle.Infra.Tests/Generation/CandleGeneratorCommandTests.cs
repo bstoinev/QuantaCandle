@@ -3,91 +3,111 @@ using QuantaCandle.Infra.Generation;
 namespace QuantaCandle.Infra.Tests.Generation;
 
 /// <summary>
-/// Verifies the option-only command surface exposed by the candle generator executable.
+/// Verifies the positional command surface exposed by the CLI executable.
 /// </summary>
 public sealed class CandleGeneratorCommandTests
 {
     [Fact]
-    public void ParsesGeneratorOptionsWithoutCommandToken()
+    public void ParsesCandlizeCommandWithReadableOptions()
     {
         var options = CandleGeneratorCommand.Parse(
         [
-            "--mode", "generate-candles",
-            "--source", "binance",
-            "--timeframe", "1m",
-            "--format", "jsonl",
-            "--inDir", "trades-in",
-            "--outDir", "candles-out",
+            "candlize",
+            "btc-usdt",
+            "--exchange", "Binance",
+            "--workDir", "W:\\QuantaCandle",
+            "--dates", "20260330,20260401",
         ]);
 
-        Assert.Equal(CandleGeneratorMode.GenerateCandles, options.Mode);
-        Assert.Equal("binance", options.Source);
-        Assert.Equal("1m", options.Timeframe);
-        Assert.Equal("jsonl", options.Format);
-        Assert.Equal("trades-in", options.InputDirectory);
-        Assert.Equal("candles-out", options.OutputDirectory);
+        Assert.Equal(CandleGeneratorMode.Candlize, options.Mode);
+        Assert.Equal("Binance", options.Exchange);
+        Assert.Equal("BTC-USDT", options.Instrument);
+        Assert.Equal("W:\\QuantaCandle", options.WorkDirectory);
+        Assert.Equal([new DateOnly(2026, 3, 30), new DateOnly(2026, 4, 1)], options.Dates);
     }
 
     [Fact]
-    public void DefaultsToGenerateCandlesModeWhenModeIsOmitted()
+    public void DefaultsExchangeAndWorkDirectoryWhenOptionsAreOmitted()
     {
-        var options = CandleGeneratorCommand.Parse(["--source", "binance"]);
+        var options = CandleGeneratorCommand.Parse(["scan", "btc-usdt"]);
 
-        Assert.Equal(CandleGeneratorMode.GenerateCandles, options.Mode);
+        Assert.Equal(CandleGeneratorMode.Scan, options.Mode);
+        Assert.Equal("Binance", options.Exchange);
+        Assert.Equal(Directory.GetCurrentDirectory(), options.WorkDirectory);
+        Assert.Equal("BTC-USDT", options.Instrument);
+        Assert.Empty(options.Dates);
     }
 
     [Fact]
-    public void ParsesScanGapMode()
+    public void ParsesAliasOptions()
     {
-        var options = CandleGeneratorCommand.Parse(["--mode", "scan-gaps", "--inDir", "trades-in"]);
+        var options = CandleGeneratorCommand.Parse(["heal", "btc-usdt", "-on", "20260328", "-x", "Binance", "-dir", "W:\\QuantaCandle"]);
 
-        Assert.Equal(CandleGeneratorMode.ScanGaps, options.Mode);
-        Assert.Equal("trades-in", options.InputDirectory);
-        Assert.Empty(options.ScanDates);
+        Assert.Equal(CandleGeneratorMode.Heal, options.Mode);
+        Assert.Equal("Binance", options.Exchange);
+        Assert.Equal("W:\\QuantaCandle", options.WorkDirectory);
+        Assert.Equal([new DateOnly(2026, 3, 28)], options.Dates);
     }
 
     [Fact]
-    public void ParsesSingleScanDateUsingCompactFormat()
+    public void RejectsMissingCommand()
     {
-        var options = CandleGeneratorCommand.Parse(["--mode", "scan-gaps", "--inDir", "trades-in", "--date", "20260312"]);
+        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse([]));
 
-        Assert.Equal([new DateOnly(2026, 3, 12)], options.ScanDates);
+        Assert.Contains("command argument is required", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void ParsesMultipleScanDatesUsingMixedFormats()
+    public void RejectsUnknownCommand()
     {
-        var options = CandleGeneratorCommand.Parse(["--mode", "scan-gaps", "--inDir", "trades-in", "--dates", "2026-03-13,20260312"]);
+        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["generate-candles", "btc-usdt"]));
 
-        Assert.Equal(
-            [
-                new DateOnly(2026, 3, 12),
-                new DateOnly(2026, 3, 13),
-            ],
-            options.ScanDates);
+        Assert.Contains("Unknown command 'generate-candles'", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RejectsInvalidScanDate()
+    public void RejectsLegacyCommandAlias()
     {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["--mode", "scan-gaps", "--inDir", "trades-in", "--date", "2026/03/12"]));
+        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal-gaps", "btc-usdt"]));
+
+        Assert.Contains("Unknown command 'heal-gaps'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RejectsMissingInstrument()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal"]));
+
+        Assert.Contains("instrument argument is required", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RejectsMissingOptionValue()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal", "btc-usdt", "--dates"]));
+
+        Assert.Contains("Option '--dates' requires a value.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--mode")]
+    [InlineData("--source")]
+    [InlineData("--date")]
+    [InlineData("--inDir")]
+    [InlineData("--outDir")]
+    [InlineData("--instrument")]
+    public void RejectsLegacyOptions(string option)
+    {
+        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal", "btc-usdt", option, "value"]));
+
+        Assert.Contains($"Legacy option '{option}'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RejectsInvalidDateFormat()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal", "btc-usdt", "--dates", "2026/03/12"]));
 
         Assert.Contains("yyyy-MM-dd", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void ScanGapModeRequiresInputDirectory()
-    {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["--mode", "scan-gaps"]));
-
-        Assert.Contains("--inDir", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void RejectsLegacyCommandToken()
-    {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["generate-candles", "--source", "binance"]));
-
-        Assert.Contains("Unexpected argument 'generate-candles'", exception.Message, StringComparison.Ordinal);
     }
 }

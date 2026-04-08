@@ -6,16 +6,19 @@ using QuantaCandle.Infra.Generation;
 namespace QuantaCandle.Infra.Tests.Generation;
 
 /// <summary>
-/// Verifies command dispatch for the candle generator executable workflow.
+/// Verifies command dispatch for the CLI workflow.
 /// </summary>
 public sealed class CandleGeneratorApplicationTests
 {
     [Fact]
-    public async Task ScanGapsModeDispatchesToScannerAndPrintsGapSummary()
+    public async Task ScanModeDispatchesToScannerAndPrintsGapSummary()
     {
-        var inputDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+        var workDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+        var inputDirectory = Path.Combine(workDirectory, "trades-out");
+        var instrumentDirectory = Path.Combine(inputDirectory, "BTC-USDT");
         var generationRunnerMoq = new Mock<ICandleGenerationRunner>(MockBehavior.Strict);
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanResult = new TradeGapScanResult(
             2,
             4,
@@ -50,16 +53,18 @@ public sealed class CandleGeneratorApplicationTests
             .Callback<TradeGapScanRequest, CancellationToken>((request, _) => capturedRequest = request)
             .Returns(new ValueTask<TradeGapScanResult>(scanResult));
 
-        var app = new CandleGeneratorApplication(generationRunnerMoq.Object, scannerMoq.Object);
+        var app = new CandleGeneratorApplication(generationRunnerMoq.Object, scannerMoq.Object, healerMoq.Object);
         using var outputWriter = new StringWriter();
         using var errorWriter = new StringWriter();
 
         try
         {
-            Directory.CreateDirectory(inputDirectory);
+            Directory.CreateDirectory(instrumentDirectory);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-03-12.jsonl"), string.Empty, CancellationToken.None);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-03-13.jsonl"), string.Empty, CancellationToken.None);
 
             var exitCode = await app.Run(
-                ["--mode", "scan-gaps", "--inDir", inputDirectory],
+                ["scan", "btc-usdt", "--workDir", workDirectory],
                 outputWriter,
                 errorWriter,
                 CancellationToken.None);
@@ -67,6 +72,7 @@ public sealed class CandleGeneratorApplicationTests
             Assert.Equal(0, exitCode);
             Assert.NotNull(capturedRequest);
             Assert.Equal(Path.GetFullPath(inputDirectory), capturedRequest!.RootDirectory);
+            Assert.All(capturedRequest.CandidateFiles, file => Assert.StartsWith("BTC-USDT", file.Path, StringComparison.Ordinal));
             Assert.Contains("Files scanned:", outputWriter.ToString(), StringComparison.Ordinal);
             Assert.Contains("Trades scanned:", outputWriter.ToString(), StringComparison.Ordinal);
             Assert.Contains("Gaps found:", outputWriter.ToString(), StringComparison.Ordinal);
@@ -82,23 +88,26 @@ public sealed class CandleGeneratorApplicationTests
                 mock => mock.GenerateAsync(It.IsAny<TradeToCandleGeneratorOptions>(), It.IsAny<CancellationToken>()),
                 Times.Never);
             scannerMoq.Verify(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+            healerMoq.Verify(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         }
         finally
         {
-            if (Directory.Exists(inputDirectory))
+            if (Directory.Exists(workDirectory))
             {
-                Directory.Delete(inputDirectory, recursive: true);
+                Directory.Delete(workDirectory, recursive: true);
             }
         }
     }
 
     [Fact]
-    public async Task ScanGapsModeResolvesRequestedDatesIntoCandidateFiles()
+    public async Task ScanModeResolvesRequestedDatesIntoCandidateFiles()
     {
-        var inputDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+        var workDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+        var inputDirectory = Path.Combine(workDirectory, "trades-out");
         var instrumentDirectory = Path.Combine(inputDirectory, "BTC-USDT");
         var generationRunnerMoq = new Mock<ICandleGenerationRunner>(MockBehavior.Strict);
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         TradeGapScanRequest? capturedRequest = null;
 
         scannerMoq
@@ -106,7 +115,7 @@ public sealed class CandleGeneratorApplicationTests
             .Callback<TradeGapScanRequest, CancellationToken>((request, _) => capturedRequest = request)
             .Returns(new ValueTask<TradeGapScanResult>(new TradeGapScanResult(1, 0, 0, [], [], [])));
 
-        var app = new CandleGeneratorApplication(generationRunnerMoq.Object, scannerMoq.Object);
+        var app = new CandleGeneratorApplication(generationRunnerMoq.Object, scannerMoq.Object, healerMoq.Object);
         using var outputWriter = new StringWriter();
         using var errorWriter = new StringWriter();
 
@@ -117,7 +126,7 @@ public sealed class CandleGeneratorApplicationTests
             await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-03-13.jsonl"), string.Empty, CancellationToken.None);
 
             var exitCode = await app.Run(
-                ["--mode", "scan-gaps", "--inDir", inputDirectory, "--dates", "20260312"],
+                ["scan", "btc-usdt", "--workDir", workDirectory, "--dates", "20260312"],
                 outputWriter,
                 errorWriter,
                 CancellationToken.None);
@@ -130,10 +139,117 @@ public sealed class CandleGeneratorApplicationTests
         }
         finally
         {
-            if (Directory.Exists(inputDirectory))
+            if (Directory.Exists(workDirectory))
             {
-                Directory.Delete(inputDirectory, recursive: true);
+                Directory.Delete(workDirectory, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public async Task HealModeDispatchesBoundedGapsToHealer()
+    {
+        var workDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+        var inputDirectory = Path.Combine(workDirectory, "trades-out");
+        var instrumentDirectory = Path.Combine(inputDirectory, "BTC-USDT");
+        var generationRunnerMoq = new Mock<ICandleGenerationRunner>(MockBehavior.Strict);
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        TradeGapHealRequest? capturedRequest = null;
+        var gap = TradeGap
+            .CreateOpen(
+                Guid.NewGuid(),
+                new ExchangeId("Binance"),
+                Instrument.Parse("BTC-USDT"),
+                new TradeWatermark("100", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero))
+            .ToBounded(
+                new TradeWatermark("103", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
+                new MissingTradeIdRange(101, 102));
+        var scanResult = new TradeGapScanResult(
+            1,
+            4,
+            0,
+            [gap],
+            [new TradeGapAffectedFile(Path.Combine("BTC-USDT", "2026-03-12.jsonl"), new DateOnly(2026, 3, 12))],
+            [
+                new TradeGapAffectedRange(
+                    new TradeWatermark("100", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                    new TradeWatermark("103", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
+                    new TradeGapBoundaryLocation(Path.Combine("BTC-USDT", "2026-03-12.jsonl"), 2),
+                    new TradeGapBoundaryLocation(Path.Combine("BTC-USDT", "2026-03-12.jsonl"), 3)),
+            ]);
+
+        scannerMoq
+            .Setup(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<TradeGapScanResult>(scanResult));
+        healerMoq
+            .Setup(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TradeGapHealRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .Returns(
+                new ValueTask<TradeGapHealResult>(
+                    new TradeGapHealResult(
+                        new ExchangeId("Binance"),
+                        Instrument.Parse("BTC-USDT"),
+                        TradeGapHealStatus.Full,
+                        new MissingTradeIdRange(101, 102),
+                        2,
+                        2,
+                        true,
+                        [],
+                        [],
+                        [new TradeGapAffectedFile(Path.Combine("BTC-USDT", "2026-03-12.jsonl"), new DateOnly(2026, 3, 12))],
+                        [])));
+
+        var app = new CandleGeneratorApplication(generationRunnerMoq.Object, scannerMoq.Object, healerMoq.Object);
+        using var outputWriter = new StringWriter();
+        using var errorWriter = new StringWriter();
+
+        try
+        {
+            Directory.CreateDirectory(instrumentDirectory);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-03-12.jsonl"), string.Empty, CancellationToken.None);
+
+            var exitCode = await app.Run(
+                ["heal", "btc-usdt", "--workDir", workDirectory],
+                outputWriter,
+                errorWriter,
+                CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.NotNull(capturedRequest);
+            Assert.Equal(Path.GetFullPath(inputDirectory), capturedRequest!.RootDirectory);
+            Assert.Equal(new ExchangeId("Binance"), capturedRequest.Exchange);
+            Assert.Equal(Instrument.Parse("BTC-USDT"), capturedRequest.Symbol);
+            Assert.Equal(101, capturedRequest.MissingTradeIdStart);
+            Assert.Equal(102, capturedRequest.MissingTradeIdEnd);
+            Assert.Contains("Gaps healed full:", outputWriter.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, errorWriter.ToString());
+        }
+        finally
+        {
+            if (Directory.Exists(workDirectory))
+            {
+                Directory.Delete(workDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task HelpWritesNewCliUsage()
+    {
+        var generationRunnerMoq = new Mock<ICandleGenerationRunner>(MockBehavior.Strict);
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var app = new CandleGeneratorApplication(generationRunnerMoq.Object, scannerMoq.Object, healerMoq.Object);
+        using var outputWriter = new StringWriter();
+        using var errorWriter = new StringWriter();
+
+        var exitCode = await app.Run(["--help"], outputWriter, errorWriter, CancellationToken.None);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("QuantaCandle.CLI", outputWriter.ToString(), StringComparison.Ordinal);
+        Assert.Contains("qc heal <instrument>", outputWriter.ToString(), StringComparison.Ordinal);
+        Assert.Equal(string.Empty, errorWriter.ToString());
     }
 }
