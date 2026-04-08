@@ -63,3 +63,4 @@ tmp-trades-out*/*
 tmp-e2e/*
 /tmp-trades/*
 launchSettings.json
+/src/QuantaCandle.CandleGenerator/Properties/launchSettings.json
