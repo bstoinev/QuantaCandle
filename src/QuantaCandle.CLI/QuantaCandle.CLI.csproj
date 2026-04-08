@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>qc</AssemblyName>
+    <RootNamespace>QuantaCandle.CLI</RootNamespace>
+    <CliOutputName>qc</CliOutputName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QuantaCandle.Infra\QuantaCandle.Infra.csproj" />
+  </ItemGroup>
+
+  <Target Name="RenameWindowsAppHostAfterBuild" AfterTargets="Build" Condition="'$(UseAppHost)' == 'true' and '$(_NativeExecutableExtension)' == '.exe' and Exists('$(TargetDir)$(AssemblyName)$(_NativeExecutableExtension)')">
+    <Move SourceFiles="$(TargetDir)$(AssemblyName)$(_NativeExecutableExtension)" DestinationFiles="$(TargetDir)$(CliOutputName)$(_NativeExecutableExtension)" OverwriteReadOnlyFiles="true" />
+  </Target>
+
+  <Target Name="RenameWindowsAppHostAfterPublish" AfterTargets="Publish" Condition="'$(UseAppHost)' == 'true' and '$(_NativeExecutableExtension)' == '.exe' and Exists('$(PublishDir)$(AssemblyName)$(_NativeExecutableExtension)')">
+    <Move SourceFiles="$(PublishDir)$(AssemblyName)$(_NativeExecutableExtension)" DestinationFiles="$(PublishDir)$(CliOutputName)$(_NativeExecutableExtension)" OverwriteReadOnlyFiles="true" />
+  </Target>
+
+</Project>
