@@ -14,6 +14,49 @@ namespace QuantaCandle.Infra.Tests.Recording;
 public sealed class TradeRecorderCompositionRootTests
 {
     [Fact]
+    public void ConfigureUsesFileSinkWhenSinkOptionIsOmitted()
+    {
+        using var container = new Container();
+        var options = TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+        ]);
+
+        TradeRecorderCompositionRoot.Configure(container, options);
+
+        container.Verify();
+
+        var checkpointLifecycle = container.GetInstance<ITradeCheckpointLifecycle>();
+        var sink = container.GetInstance<ITradeFinalizedFileDispatcher>();
+
+        Assert.IsType<TradeScratchCheckpointLifecycle>(checkpointLifecycle);
+        Assert.IsType<TradeSinkFileSimple>(sink);
+    }
+
+    [Fact]
+    public void ConfigureUsesNullSinkWhenExplicitNullSinkIsRequested()
+    {
+        using var container = new Container();
+        var options = TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+            "--sink", "null",
+        ]);
+
+        TradeRecorderCompositionRoot.Configure(container, options);
+
+        container.Verify();
+
+        var checkpointLifecycle = container.GetInstance<ITradeCheckpointLifecycle>();
+        var sink = container.GetInstance<ITradeFinalizedFileDispatcher>();
+
+        Assert.IsType<NullTradeCheckpointLifecycle>(checkpointLifecycle);
+        Assert.IsType<TradeSinkNull>(sink);
+    }
+
+    [Fact]
     public void ConfigureAllowsResolvingS3SinkComposition()
     {
         var previousAwsRegion = Environment.GetEnvironmentVariable("AWS_REGION");

@@ -40,7 +40,7 @@ public static class TradeRecorderCommand
         var options = ParseOptions(optionArgs);
 
         var source = GetRequiredStringOption(options, "source");
-        var sink = GetStringOption(options, "sink", "null");
+        var sink = GetStringOption(options, "sink", "file");
         var s3Bucket = GetStringOptionOrEnvironment(options, "s3Bucket", "QUANTA_CANDLE_S3_BUCKET", "QUANTA_S3_BUCKET", "S3_BUCKET");
 
         if (sink.Equals("s3", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(s3Bucket))
@@ -87,9 +87,10 @@ public static class TradeRecorderCommand
         writer.WriteLine("QuantaCandle.TradeRecorder");
         writer.WriteLine();
         writer.WriteLine("Usage:");
-        writer.WriteLine("  --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--sink null|file|s3] [--outDir trades-out]");
-        writer.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--sink null|file|s3] [--outDir trades-out]");
+        writer.WriteLine("  --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--sink file|s3|null] [--outDir trades-out]");
+        writer.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--sink file|s3|null] [--outDir trades-out]");
         writer.WriteLine("    Omit --duration to keep recording until the host or process is stopped.");
+        writer.WriteLine("    Default sink: file. Use --sink null to disable durable trade output intentionally.");
         writer.WriteLine("    S3 sink options: --s3Bucket my-bucket [--s3Prefix trades/raw] (env: QUANTA_CANDLE_S3_BUCKET, QUANTA_CANDLE_S3_PREFIX)");
         writer.WriteLine("    Binance options: [--binanceWsBase wss://stream.binance.com:9443] (try wss://stream.binance.us:9443 in the US)");
     }

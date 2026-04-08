@@ -39,6 +39,20 @@ public sealed class TradeRecorderCommandTests
     }
 
     [Fact]
+    public void DefaultsSinkToFileWhenSinkOptionIsOmitted()
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+        ]);
+
+        Assert.NotNull(options.SinkRegistration.FileOptions);
+        Assert.Equal("trades-out", options.SinkRegistration.FileOptions.OutputDirectory);
+        Assert.Null(options.SinkRegistration.S3Options);
+    }
+
+    [Fact]
     public void ParsesCheckpointIntervalOption()
     {
         var options = TradeRecorderCommand.Parse(
@@ -61,6 +75,20 @@ public sealed class TradeRecorderCommandTests
         ]);
 
         Assert.Equal(TimeSpan.FromHours(1), options.CollectorOptions.CheckpointInterval);
+    }
+
+    [Fact]
+    public void ParsesExplicitNullSinkOptions()
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+            "--sink", "null",
+        ]);
+
+        Assert.Null(options.SinkRegistration.FileOptions);
+        Assert.Null(options.SinkRegistration.S3Options);
     }
 
     [Fact]
@@ -108,6 +136,8 @@ public sealed class TradeRecorderCommandTests
 
         Assert.Contains("[--duration 10m]", help, StringComparison.Ordinal);
         Assert.Contains("[--checkpointInterval 1h]", help, StringComparison.Ordinal);
+        Assert.Contains("[--sink file|s3|null]", help, StringComparison.Ordinal);
+        Assert.Contains("Default sink: file. Use --sink null to disable durable trade output intentionally.", help, StringComparison.Ordinal);
         Assert.Contains("Omit --duration to keep recording until the host or process is stopped.", help, StringComparison.Ordinal);
     }
 }
