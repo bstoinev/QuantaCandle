@@ -101,11 +101,7 @@ public sealed class TradeScratchCheckpointLifecycle(
                 ? pendingTrades.Take(pendingTrades.Count - 1).ToArray()
                 : [];
             var tradesToPersist = NormalizeCheckpointTrades(originalTradesToPersist);
-            var currentScratchState = _scratchStatesByInstrument.TryGetValue(pair.Key, out var scratchState)
-                ? scratchState
-                : InstrumentScratchState.Empty;
-
-            result[pair.Key] = new TradeCheckpointSlice(originalTradesToPersist.Length, tradesToPersist, currentScratchState);
+            result[pair.Key] = new TradeCheckpointSlice(originalTradesToPersist.Length, tradesToPersist);
         }
 
         return result;
@@ -305,18 +301,12 @@ public sealed class TradeScratchCheckpointLifecycle(
     /// </summary>
     private sealed class TradeCheckpointSlice(
         int persistedTradeCount,
-        IReadOnlyList<TradeInfo> tradesToPersist,
-        InstrumentScratchState scratchState)
+        IReadOnlyList<TradeInfo> tradesToPersist)
     {
         /// <summary>
         /// Gets the number of trades that were persisted from the front of the pending in-memory sequence.
         /// </summary>
         public int PersistedTradeCount { get; } = persistedTradeCount;
-
-        /// <summary>
-        /// Gets the recorder-owned scratch state for the instrument before the checkpoint begins.
-        /// </summary>
-        public InstrumentScratchState ScratchState { get; } = scratchState;
 
         /// <summary>
         /// Gets the trades that should be appended to the instrument scratch file.
