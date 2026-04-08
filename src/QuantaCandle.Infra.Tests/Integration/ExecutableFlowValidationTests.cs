@@ -85,7 +85,6 @@ public sealed class ExecutableFlowValidationTests
         var checkpointLifecycle = new TradeScratchCheckpointLifecycle(
             tradeDirectory,
             sink,
-            new TradeCheckpointBatchPreparator(),
             stateStore,
             checkpointLifecycleLogMoq.Object);
 

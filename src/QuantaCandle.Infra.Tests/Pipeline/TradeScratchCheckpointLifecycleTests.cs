@@ -1,6 +1,7 @@
 using System.Text.Json;
 
 using LogMachina;
+
 using Moq;
 
 using QuantaCandle.Core.Trading;
@@ -8,83 +9,39 @@ using QuantaCandle.Infra.Pipeline;
 
 namespace QuantaCandle.Infra.Tests.Pipeline;
 
+/// <summary>
+/// Verifies recorder-owned scratch checkpoint persistence and UTC day rollover behavior.
+/// </summary>
 public sealed class TradeScratchCheckpointLifecycleTests
 {
     [Fact]
-    public async Task CheckpointWritesQcScratchJsonl()
+    public async Task SameDayCheckpointAppendsOnlyToQcScratchJsonl()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
-            var (lifecycle, _) = CreateLifecycle(localRoot);
+            var dispatcher = new RecordingTradeFinalizedFileDispatcher();
+            var (lifecycle, _) = CreateLifecycle(localRoot, dispatcher);
 
             await lifecycle.TrackAppendedTrades(
             [
                 CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
                 CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
             ], CancellationToken.None);
 
             await lifecycle.CheckpointActive(CancellationToken.None);
 
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT"));
+            var instrument = Instrument.Parse("BTC-USDT");
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
+            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 12));
+            var payload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
+
             Assert.True(File.Exists(scratchPath));
-        }
-        finally
-        {
-            DeleteDirectory(localRoot);
-        }
-    }
-
-    [Fact]
-    public async Task CheckpointBatchIsNormalizedBeforePersistence()
-    {
-        var localRoot = CreateTempDirectory();
-
-        try
-        {
-            var (lifecycle, _) = CreateLifecycle(localRoot);
-
-            await lifecycle.TrackAppendedTrades(
-            [
-                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
-                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
-                CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
-            ], CancellationToken.None);
-
-            await lifecycle.CheckpointActive(CancellationToken.None);
-
-            var payload = await File.ReadAllTextAsync(TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")), CancellationToken.None);
-            Assert.Equal(["1", "2", "3"], ParseTradeIds(payload));
-        }
-        finally
-        {
-            DeleteDirectory(localRoot);
-        }
-    }
-
-    [Fact]
-    public async Task DuplicatesInsideCheckpointableRangeAreRemovedBeforePersistence()
-    {
-        var localRoot = CreateTempDirectory();
-
-        try
-        {
-            var (lifecycle, _) = CreateLifecycle(localRoot);
-
-            await lifecycle.TrackAppendedTrades(
-            [
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
-                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
-                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
-            ], CancellationToken.None);
-
-            await lifecycle.CheckpointActive(CancellationToken.None);
-
-            var payload = await File.ReadAllTextAsync(TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")), CancellationToken.None);
+            Assert.False(File.Exists(finalizedPath));
             Assert.Equal(["1", "2"], ParseTradeIds(payload));
+            Assert.Empty(dispatcher.Dispatches);
         }
         finally
         {
@@ -93,33 +50,30 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
-    public async Task PersistedTailAndCheckpointableRangeBoundaryAreMergedWithoutDuplicates()
+    public async Task CheckpointNeverReloadsExistingScratchContents()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
             var (lifecycle, _) = CreateLifecycle(localRoot);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT"));
+
+            Directory.CreateDirectory(Path.GetDirectoryName(scratchPath)!);
+            await File.WriteAllTextAsync(scratchPath, "not-json\r\n", CancellationToken.None);
 
             await lifecycle.TrackAppendedTrades(
             [
                 CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
                 CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
-                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
             ], CancellationToken.None);
+
             await lifecycle.CheckpointActive(CancellationToken.None);
 
-            await lifecycle.TrackAppendedTrades(
-            [
-                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
-                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
-                CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
-                CreateTrade("5", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
-            ], CancellationToken.None);
-            await lifecycle.CheckpointActive(CancellationToken.None);
+            var payload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
 
-            var payload = await File.ReadAllTextAsync(TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")), CancellationToken.None);
-            Assert.Equal(["1", "2", "3", "4"], ParseTradeIds(payload));
+            Assert.StartsWith("not-json\r\n", payload, StringComparison.Ordinal);
+            Assert.Equal(["1"], ParseTradeIds(payload));
         }
         finally
         {
@@ -128,35 +82,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
-    public async Task CheckpointCrossingUtcMidnightFinalizesOlderDateIntoDailyFile()
-    {
-        var localRoot = CreateTempDirectory();
-
-        try
-        {
-            var (lifecycle, _) = CreateLifecycle(localRoot);
-
-            await lifecycle.TrackAppendedTrades(
-            [
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
-                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
-                CreateTrade("3", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero)),
-                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero)),
-            ], CancellationToken.None);
-
-            await lifecycle.CheckpointActive(CancellationToken.None);
-
-            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, Instrument.Parse("BTC-USDT"), new DateOnly(2026, 3, 12));
-            Assert.True(File.Exists(finalizedPath));
-        }
-        finally
-        {
-            DeleteDirectory(localRoot);
-        }
-    }
-
-    [Fact]
-    public async Task CheckpointCrossingUtcMidnightDispatchesTheFinalizedDailyFile()
+    public async Task CrossMidnightCheckpointFinalizesOlderScratchThenStartsNewScratch()
     {
         var localRoot = CreateTempDirectory();
 
@@ -175,73 +101,18 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
             await lifecycle.CheckpointActive(CancellationToken.None);
 
+            var instrument = Instrument.Parse("BTC-USDT");
+            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 12));
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
+            var finalizedPayload = await File.ReadAllTextAsync(finalizedPath, CancellationToken.None);
+            var scratchPayload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
             var dispatch = Assert.Single(dispatcher.Dispatches);
-            Assert.Equal(Instrument.Parse("BTC-USDT"), dispatch.Instrument);
-            Assert.Equal(new DateOnly(2026, 3, 12), dispatch.UtcDate);
-            Assert.Equal(TradeLocalDailyFilePath.Build(localRoot, dispatch.Instrument, dispatch.UtcDate), dispatch.FinalizedFilePath);
-        }
-        finally
-        {
-            DeleteDirectory(localRoot);
-        }
-    }
-
-    [Fact]
-    public async Task CrossMidnightRolloverStillWorksAfterBatchPreparation()
-    {
-        var localRoot = CreateTempDirectory();
-
-        try
-        {
-            var (lifecycle, _) = CreateLifecycle(localRoot);
-
-            await lifecycle.TrackAppendedTrades(
-            [
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
-                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
-                CreateTrade("3", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero)),
-                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero)),
-            ], CancellationToken.None);
-
-            await lifecycle.CheckpointActive(CancellationToken.None);
-
-            var finalizedPayload = await File.ReadAllTextAsync(
-                TradeLocalDailyFilePath.Build(localRoot, Instrument.Parse("BTC-USDT"), new DateOnly(2026, 3, 12)),
-                CancellationToken.None);
 
             Assert.Equal(["1", "2"], ParseTradeIds(finalizedPayload));
-        }
-        finally
-        {
-            DeleteDirectory(localRoot);
-        }
-    }
-
-    [Fact]
-    public async Task ScratchAfterSplitContainsOnlyNewerDatePersistedTrades()
-    {
-        var localRoot = CreateTempDirectory();
-
-        try
-        {
-            var (lifecycle, _) = CreateLifecycle(localRoot);
-
-            await lifecycle.TrackAppendedTrades(
-            [
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
-                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
-                CreateTrade("3", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero)),
-                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero)),
-            ], CancellationToken.None);
-
-            await lifecycle.CheckpointActive(CancellationToken.None);
-
-            var scratchPayload = await File.ReadAllTextAsync(
-                TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")),
-                CancellationToken.None);
-
             Assert.Equal(["3"], ParseTradeIds(scratchPayload));
+            Assert.Equal(finalizedPath, dispatch.FinalizedFilePath);
+            Assert.True(dispatch.FileExistedAtDispatch);
+            Assert.Equal(new DateOnly(2026, 3, 12), dispatch.UtcDate);
         }
         finally
         {
@@ -250,70 +121,34 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
-    public async Task LatestTradeIsStillExcludedFromPersistence()
+    public async Task DispatcherReceivesOnlyFinalizedDailyFiles()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
-            var (lifecycle, _) = CreateLifecycle(localRoot);
+            var dispatcher = new RecordingTradeFinalizedFileDispatcher();
+            var (lifecycle, _) = CreateLifecycle(localRoot, dispatcher);
 
             await lifecycle.TrackAppendedTrades(
             [
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
-                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
-                CreateTrade("3", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero)),
-                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
             ], CancellationToken.None);
-
             await lifecycle.CheckpointActive(CancellationToken.None);
-
-            var finalizedPayload = await File.ReadAllTextAsync(
-                TradeLocalDailyFilePath.Build(localRoot, Instrument.Parse("BTC-USDT"), new DateOnly(2026, 3, 12)),
-                CancellationToken.None);
-            var scratchPayload = await File.ReadAllTextAsync(
-                TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")),
-                CancellationToken.None);
-
-            Assert.DoesNotContain("4", ParseTradeIds(finalizedPayload).OfType<string>());
-            Assert.DoesNotContain("4", ParseTradeIds(scratchPayload).OfType<string>());
-        }
-        finally
-        {
-            DeleteDirectory(localRoot);
-        }
-    }
-
-    [Fact]
-    public async Task RepeatedCheckpointsAfterSplitContinueFromNewScratch()
-    {
-        var localRoot = CreateTempDirectory();
-
-        try
-        {
-            var (lifecycle, _) = CreateLifecycle(localRoot);
 
             await lifecycle.TrackAppendedTrades(
             [
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
-                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
-                CreateTrade("3", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero)),
-                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
+                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("5", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero)),
             ], CancellationToken.None);
-
-            await lifecycle.CheckpointActive(CancellationToken.None);
-            await lifecycle.TrackAppendedTrades([CreateTrade("5", new DateTimeOffset(2026, 3, 13, 0, 0, 2, TimeSpan.Zero))], CancellationToken.None);
             await lifecycle.CheckpointActive(CancellationToken.None);
 
-            var finalizedPayload = await File.ReadAllTextAsync(
-                TradeLocalDailyFilePath.Build(localRoot, Instrument.Parse("BTC-USDT"), new DateOnly(2026, 3, 12)),
-                CancellationToken.None);
-            var scratchPayload = await File.ReadAllTextAsync(
-                TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")),
-                CancellationToken.None);
+            var dispatch = Assert.Single(dispatcher.Dispatches);
 
-            Assert.Equal(["1", "2"], ParseTradeIds(finalizedPayload));
-            Assert.Equal(["3", "4"], ParseTradeIds(scratchPayload));
+            Assert.Equal("2026-03-12.jsonl", Path.GetFileName(dispatch.FinalizedFilePath));
+            Assert.DoesNotContain("qc-scratch", dispatch.FinalizedFilePath, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -322,13 +157,14 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
-    public async Task LatestTradeRemainsInMemoryAcrossCheckpoint()
+    public async Task LatestTradeRetentionStillWorksAcrossRepeatedSameDayCheckpoints()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
             var (lifecycle, _) = CreateLifecycle(localRoot);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT"));
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -336,12 +172,17 @@ public sealed class TradeScratchCheckpointLifecycleTests
                 CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
                 CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
             ], CancellationToken.None);
-
-            await lifecycle.CheckpointActive(CancellationToken.None);
-            await lifecycle.TrackAppendedTrades([CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero))], CancellationToken.None);
             await lifecycle.CheckpointActive(CancellationToken.None);
 
-            var payload = await File.ReadAllTextAsync(TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")), CancellationToken.None);
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
+                CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
+            ], CancellationToken.None);
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var payload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
+
             Assert.Equal(["1", "2", "3"], ParseTradeIds(payload));
         }
         finally
@@ -351,25 +192,39 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
-    public async Task RepeatedCheckpointsDoNotDuplicateAlreadyPersistedTrades()
+    public async Task NewDayScratchContinuesAfterRollover()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
             var (lifecycle, _) = CreateLifecycle(localRoot);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
 
             await lifecycle.TrackAppendedTrades(
             [
-                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
-                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero)),
             ], CancellationToken.None);
-
-            await lifecycle.CheckpointActive(CancellationToken.None);
             await lifecycle.CheckpointActive(CancellationToken.None);
 
-            var payload = await File.ReadAllTextAsync(TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")), CancellationToken.None);
-            Assert.Equal(["1"], ParseTradeIds(payload));
+            var firstPayload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
+
+            Assert.Equal(["3"], ParseTradeIds(firstPayload));
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("5", new DateTimeOffset(2026, 3, 13, 0, 0, 2, TimeSpan.Zero)),
+            ], CancellationToken.None);
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var payload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
+
+            Assert.Equal(["3", "4"], ParseTradeIds(payload));
         }
         finally
         {
@@ -378,7 +233,44 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
-    public async Task MissingRangeGapIsRecordedButNotReconstructed()
+    public async Task GapTracingUsesOnlyCurrentBatchBeingFlushed()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var (lifecycle, stateStore) = CreateLifecycle(localRoot);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT"));
+
+            Directory.CreateDirectory(Path.GetDirectoryName(scratchPath)!);
+            await File.WriteAllTextAsync(
+                scratchPath,
+                TradeJsonlFile.BuildPayload(
+                [
+                    CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
+                    CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
+                ]),
+                CancellationToken.None);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("5", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
+                CreateTrade("6", new DateTimeOffset(2026, 3, 12, 0, 0, 5, TimeSpan.Zero)),
+            ], CancellationToken.None);
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), CancellationToken.None);
+
+            Assert.Empty(gaps);
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task GapTracingStillRecordsMissingIdsInsideCurrentCheckpointBatch()
     {
         var localRoot = CreateTempDirectory();
 
@@ -392,14 +284,14 @@ public sealed class TradeScratchCheckpointLifecycleTests
                 CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
                 CreateTrade("5", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
             ], CancellationToken.None);
-
             await lifecycle.CheckpointActive(CancellationToken.None);
 
-            var payload = await File.ReadAllTextAsync(TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT")), CancellationToken.None);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT"));
+            var payload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
             var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), CancellationToken.None);
+            var gap = Assert.Single(gaps);
 
             Assert.Equal(["1", "4"], ParseTradeIds(payload));
-            var gap = Assert.Single(gaps);
             Assert.Equal(TradeGapStatus.Bounded, gap.Status);
             Assert.Equal(new MissingTradeIdRange(2, 3), gap.MissingTradeIds);
         }
@@ -415,15 +307,15 @@ public sealed class TradeScratchCheckpointLifecycleTests
     {
         var logMoq = new Mock<ILogMachina<TradeScratchCheckpointLifecycle>>();
         var stateStore = new InMemoryIngestionStateStore();
-        var preparator = new TradeCheckpointBatchPreparator();
-        var result = new TradeScratchCheckpointLifecycle(localRoot, tradeFinalizedFileDispatcher ?? new TradeSinkNull(), preparator, stateStore, logMoq.Object);
+        var result = new TradeScratchCheckpointLifecycle(localRoot, tradeFinalizedFileDispatcher ?? new TradeSinkNull(), stateStore, logMoq.Object);
         return (result, stateStore);
     }
 
     private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp)
     {
         var key = new TradeKey(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), tradeId);
-        return new TradeInfo(key, timestamp, 1m, 1m);
+        var result = new TradeInfo(key, timestamp, 1m, 1m);
+        return result;
     }
 
     private static List<string?> ParseTradeIds(string payload)
@@ -433,6 +325,11 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
         foreach (var line in lines)
         {
+            if (!line.StartsWith("{", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             using var document = JsonDocument.Parse(line);
             result.Add(document.RootElement.GetProperty("tradeId").GetString());
         }
@@ -461,10 +358,10 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
         public ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
         {
-            Dispatches.Add(new DispatchCall(instrument, utcDate, finalizedFilePath));
+            Dispatches.Add(new DispatchCall(instrument, utcDate, finalizedFilePath, File.Exists(finalizedFilePath)));
             return ValueTask.CompletedTask;
         }
     }
 
-    private sealed record DispatchCall(Instrument Instrument, DateOnly UtcDate, string FinalizedFilePath);
+    private sealed record DispatchCall(Instrument Instrument, DateOnly UtcDate, string FinalizedFilePath, bool FileExistedAtDispatch);
 }

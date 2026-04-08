@@ -37,7 +37,6 @@ public static class TradeRecorderCompositionRoot
         container.RegisterSingleton<ConsoleCheckpointHotkeyListener>();
         container.RegisterSingleton<TradePipelineStats>();
         container.RegisterSingleton<ITradeDeduplicator, InMemoryTradeDeduplicator>();
-        container.RegisterSingleton<ITradeCheckpointBatchPreparator, TradeCheckpointBatchPreparator>();
 
         RegisterTradeSource(container, options.SourceRegistration);
         RegisterTradeSink(container, options.SinkRegistration);
@@ -69,7 +68,7 @@ public static class TradeRecorderCompositionRoot
             container.RegisterInstance(fileOptions);
             container.RegisterSingleton<IIngestionStateStore>(() => new LocalFileIngestionStateStore(fileOptions.OutputDirectory, container.GetInstance<IClock>()));
             container.RegisterSingleton<ITradeFinalizedFileDispatcher, TradeSinkFileSimple>();
-            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(fileOptions.OutputDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ITradeCheckpointBatchPreparator>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
+            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(fileOptions.OutputDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
         }
         else if (tradeSinkRegistration.S3Options is not null)
         {
@@ -79,7 +78,7 @@ public static class TradeRecorderCompositionRoot
             container.RegisterSingleton<IS3ObjectUploader, AwsS3Uploader>();
             container.RegisterSingleton<IIngestionStateStore>(() => new LocalFileIngestionStateStore(s3Options.LocalRootDirectory, container.GetInstance<IClock>()));
             container.RegisterSingleton<ITradeFinalizedFileDispatcher, TradeSinkS3Simple>();
-            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(s3Options.LocalRootDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ITradeCheckpointBatchPreparator>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
+            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(s3Options.LocalRootDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
         }
         else
         {

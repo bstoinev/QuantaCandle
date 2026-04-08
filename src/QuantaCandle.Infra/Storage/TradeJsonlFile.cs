@@ -134,6 +134,34 @@ public static class TradeJsonlFile
     }
 
     /// <summary>
+    /// Appends the supplied trades to the specified JSONL file path without rebuilding the whole file payload.
+    /// </summary>
+    public static async Task AppendTradesAsync(string path, IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (trades.Count == 0)
+        {
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.None);
+        await using var writer = new StreamWriter(stream);
+
+        foreach (var trade in trades)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await writer.WriteLineAsync(SerializeTrade(trade)).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Appends the supplied payload to the specified JSONL file path.
     /// </summary>
     public static async Task AppendPayloadAsync(string path, string payload, CancellationToken cancellationToken)
@@ -194,6 +222,22 @@ public static class TradeJsonlFile
             }
         }
 
+        return result;
+    }
+
+    private static string SerializeTrade(TradeInfo trade)
+    {
+        var record = new
+        {
+            exchange = trade.Key.Exchange.ToString(),
+            instrument = trade.Key.Symbol.ToString(),
+            tradeId = trade.Key.TradeId,
+            timestamp = trade.Timestamp,
+            price = trade.Price,
+            quantity = trade.Quantity,
+        };
+
+        var result = JsonSerializer.Serialize(record);
         return result;
     }
 
