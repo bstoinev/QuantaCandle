@@ -131,9 +131,7 @@ public sealed class TradeScratchCheckpointLifecycle(
     {
         var result = InstrumentScratchState.Empty;
         var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRootDirectory, instrument);
-        var checkpointState = _scratchStatesByInstrument.TryGetValue((exchange, instrument), out var currentScratchState)
-            ? currentScratchState
-            : InstrumentScratchState.Empty;
+        var checkpointState = await GetScratchStateAsync(exchange, instrument, scratchPath, cancellationToken).ConfigureAwait(false);
         var currentScratchUtcDate = checkpointState.ActiveScratchUtcDate ?? DateOnly.FromDateTime(tradesToPersist[0].Timestamp.UtcDateTime);
         var remainingTrades = tradesToPersist.ToList();
         TradeInfo? lastRecordedTrade = checkpointState.LastRecordedTrade;
@@ -158,6 +156,12 @@ public sealed class TradeScratchCheckpointLifecycle(
 
                 if (finalizedTrades.Length == 0)
                 {
+                    if (File.Exists(scratchPath))
+                    {
+                        var recoveredFinalizedPath = await FinalizeScratchAsync(instrument, currentScratchUtcDate, scratchPath, cancellationToken).ConfigureAwait(false);
+                        await DispatchFinalizedFileAsync(instrument, currentScratchUtcDate, recoveredFinalizedPath, cancellationToken).ConfigureAwait(false);
+                    }
+
                     currentScratchUtcDate = DateOnly.FromDateTime(remainingTrades[0].Timestamp.UtcDateTime);
                     continue;
                 }
@@ -175,6 +179,51 @@ public sealed class TradeScratchCheckpointLifecycle(
                     ? new InstrumentScratchState(lastRecordedTrade, currentScratchUtcDate)
                     : new InstrumentScratchState(lastRecordedTrade, null);
             }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Loads the in-memory or persisted scratch checkpoint baseline for one instrument.
+    /// </summary>
+    private async Task<InstrumentScratchState> GetScratchStateAsync(
+        ExchangeId exchange,
+        Instrument instrument,
+        string scratchPath,
+        CancellationToken cancellationToken)
+    {
+        InstrumentScratchState? result = null;
+
+        lock (_gate)
+        {
+            _scratchStatesByInstrument.TryGetValue((exchange, instrument), out result);
+        }
+
+        if (result is not null)
+        {
+            return result;
+        }
+
+        if (!File.Exists(scratchPath))
+        {
+            return InstrumentScratchState.Empty;
+        }
+
+        log.Info($"Trade scratch checkpoint recovery: instrument={instrument}, path={scratchPath}.");
+        var metadata = await TradeJsonlFile.TryReadScratchCheckpointMetadataAsync(scratchPath, cancellationToken).ConfigureAwait(false);
+        if (metadata is null)
+        {
+            log.Warn($"Trade scratch checkpoint recovery found an empty scratch file: instrument={instrument}, path={scratchPath}.");
+            return InstrumentScratchState.Empty;
+        }
+
+        result = new InstrumentScratchState(metadata.LastRecordedTrade, metadata.ActiveScratchUtcDate);
+        log.Debug($"Trade scratch checkpoint recovered: instrument={instrument}, activeScratchUtcDate={metadata.ActiveScratchUtcDate:yyyy-MM-dd}, lastTradeId={metadata.LastRecordedTrade.Key.TradeId}, lastTradeTimestampUtc={metadata.LastRecordedTrade.Timestamp:O}.");
+
+        lock (_gate)
+        {
+            _scratchStatesByInstrument[(exchange, instrument)] = result;
         }
 
         return result;

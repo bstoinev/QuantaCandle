@@ -225,6 +225,54 @@ public static class TradeJsonlFile
         return result;
     }
 
+    /// <summary>
+    /// Reads only the scratch checkpoint metadata needed to resume rollover after restart.
+    /// </summary>
+    public static async Task<ScratchCheckpointMetadata?> TryReadScratchCheckpointMetadataAsync(string path, CancellationToken cancellationToken)
+    {
+        ScratchCheckpointMetadata? result = null;
+
+        if (!File.Exists(path))
+        {
+            return result;
+        }
+
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var reader = new StreamReader(stream);
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+            if (line is null)
+            {
+                break;
+            }
+
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            var exchange = new ExchangeId(root.GetProperty("exchange").GetString() ?? string.Empty);
+            var instrument = Instrument.Parse(root.GetProperty("instrument").GetString() ?? string.Empty);
+            var tradeId = root.GetProperty("tradeId").GetString() ?? string.Empty;
+            var timestamp = root.GetProperty("timestamp").GetDateTimeOffset();
+            var price = root.GetProperty("price").GetDecimal();
+            var quantity = root.GetProperty("quantity").GetDecimal();
+            var key = new TradeKey(exchange, instrument, tradeId);
+            var lastRecordedTrade = new TradeInfo(key, timestamp, price, quantity);
+            var activeScratchUtcDate = DateOnly.FromDateTime(timestamp.UtcDateTime);
+
+            result = new ScratchCheckpointMetadata(activeScratchUtcDate, lastRecordedTrade);
+        }
+
+        return result;
+    }
+
     private static string SerializeTrade(TradeInfo trade)
     {
         var record = new
@@ -275,4 +323,9 @@ public static class TradeJsonlFile
 
         return result;
     }
+
+    /// <summary>
+    /// Describes the minimal scratch metadata required to resume checkpoint rollover after restart.
+    /// </summary>
+    public sealed record ScratchCheckpointMetadata(DateOnly ActiveScratchUtcDate, TradeInfo LastRecordedTrade);
 }
