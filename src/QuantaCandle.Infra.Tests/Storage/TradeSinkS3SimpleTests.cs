@@ -1,9 +1,8 @@
-using System.Text.Json;
-
+using System.Reflection;
 using LogMachina;
+
 using Moq;
 
-using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 
 namespace QuantaCandle.Infra.Tests.Storage;
@@ -11,56 +10,33 @@ namespace QuantaCandle.Infra.Tests.Storage;
 public sealed class TradeSinkS3SimpleTests
 {
     [Fact]
-    public async Task AppendWritesToDeterministicLocalDailyFile()
+    public async Task DispatchUploadsOnlyTheSuppliedFinalizedFilePath()
     {
         var localRoot = CreateTempDirectory();
 
         try
         {
             var uploaderMoq = CreateUploaderMoq(out var uploads);
-            var clockMoq = CreateClockMoq(() => new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero));
             var sink = new TradeSinkS3Simple(
                 new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
                 uploaderMoq.Object,
-                clockMoq.Object,
                 CreateLogMoq().Object);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 11));
+            var ignoredPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 10));
 
-            await sink.Append([CreateTrade("123", new DateTimeOffset(2026, 3, 12, 0, 15, 0, TimeSpan.Zero), 10m)], CancellationToken.None);
+            await WriteTradeFileAsync(dispatchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
+            await WriteTradeFileAsync(ignoredPath, [CreateTrade("122", new DateTimeOffset(2026, 3, 10, 23, 59, 59, TimeSpan.Zero), 9m)]);
 
-            var localPath = Path.Combine(localRoot, "BTC-USDT", "2026-03-12.jsonl");
-            Assert.True(File.Exists(localPath));
-            Assert.Empty(uploads);
-
-            var tradeIds = ParseTradeIds(await File.ReadAllTextAsync(localPath, CancellationToken.None));
-            Assert.Equal(["123"], tradeIds);
-        }
-        finally
-        {
-            DeleteDirectory(localRoot);
-        }
-    }
-
-    [Fact]
-    public async Task AppendUploadsCompletedLocalDayFileWithoutOwningCheckpointLifecycle()
-    {
-        var localRoot = CreateTempDirectory();
-
-        try
-        {
-            var uploaderMoq = CreateUploaderMoq(out var uploads);
-            var clockMoq = CreateClockMoq(() => new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero));
-            var sink = new TradeSinkS3Simple(
-                new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
-                uploaderMoq.Object,
-                clockMoq.Object,
-                CreateLogMoq().Object);
-
-            await sink.Append([CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)], CancellationToken.None);
+            await sink.DispatchAsync(instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None);
 
             var upload = Assert.Single(uploads);
+            Assert.Equal("my-bucket", upload.BucketName);
             Assert.Equal("trades/raw/BTC-USDT/2026-03-11.jsonl", upload.ObjectKey);
-            Assert.False(typeof(ITradeSinkLifecycle).IsAssignableFrom(typeof(TradeSinkS3Simple)));
-            Assert.False(File.Exists(Path.Combine(localRoot, "BTC-USDT", "2026-03-11.jsonl")));
+            Assert.Contains("\"tradeId\":\"123\"", upload.Payload, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"tradeId\":\"122\"", upload.Payload, StringComparison.Ordinal);
+            Assert.False(File.Exists(dispatchPath));
+            Assert.True(File.Exists(ignoredPath));
         }
         finally
         {
@@ -69,7 +45,41 @@ public sealed class TradeSinkS3SimpleTests
     }
 
     [Fact]
-    public async Task FailedUploadKeepsCompletedLocalFile()
+    public async Task DispatchDeletesLocalFileOnlyAfterSuccessfulUpload()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var uploadCompleted = false;
+            var uploaderMoq = new Mock<IS3ObjectUploader>();
+            uploaderMoq
+                .Setup(mock => mock.UploadTextAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Callback(() => uploadCompleted = true)
+                .Returns(Task.CompletedTask);
+
+            var sink = new TradeSinkS3Simple(
+                new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
+                uploaderMoq.Object,
+                CreateLogMoq().Object);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 11));
+
+            await WriteTradeFileAsync(dispatchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
+
+            await sink.DispatchAsync(instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None);
+
+            Assert.True(uploadCompleted);
+            Assert.False(File.Exists(dispatchPath));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task FailedDispatchKeepsLocalFile()
     {
         var localRoot = CreateTempDirectory();
 
@@ -80,17 +90,18 @@ public sealed class TradeSinkS3SimpleTests
                 .Setup(mock => mock.UploadTextAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("S3 unavailable"));
 
-            var clockMoq = CreateClockMoq(() => new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero));
             var sink = new TradeSinkS3Simple(
                 new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
                 uploaderMoq.Object,
-                clockMoq.Object,
                 CreateLogMoq().Object);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 11));
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.Append([CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)], CancellationToken.None).AsTask());
+            await WriteTradeFileAsync(dispatchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
 
-            var localPath = Path.Combine(localRoot, "BTC-USDT", "2026-03-11.jsonl");
-            Assert.True(File.Exists(localPath));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None).AsTask());
+
+            Assert.True(File.Exists(dispatchPath));
         }
         finally
         {
@@ -99,41 +110,16 @@ public sealed class TradeSinkS3SimpleTests
     }
 
     [Fact]
-    public async Task AppendIgnoresScratchFileWhenUploadingCompletedFiles()
+    public void TradeSinkS3SimpleDoesNotAcceptTradeBatchInputs()
     {
-        var localRoot = CreateTempDirectory();
+        var acceptsTradeBatch = typeof(TradeSinkS3Simple)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .SelectMany(method => method.GetParameters())
+            .Any(parameter => parameter.ParameterType == typeof(IReadOnlyList<TradeInfo>));
 
-        try
-        {
-            var uploaderMoq = CreateUploaderMoq(out var uploads);
-            var clockMoq = CreateClockMoq(() => new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero));
-            var sink = new TradeSinkS3Simple(
-                new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
-                uploaderMoq.Object,
-                clockMoq.Object,
-                CreateLogMoq().Object);
-
-            var instrument = Instrument.Parse("BTC-USDT");
-            var instrumentDirectory = Path.Combine(localRoot, instrument.ToString());
-            Directory.CreateDirectory(instrumentDirectory);
-
-            await File.WriteAllTextAsync(
-                Path.Combine(instrumentDirectory, "qc-scratch.jsonl"),
-                TradeJsonlFile.BuildPayload([CreateTrade("999", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero), 10m)]),
-                CancellationToken.None);
-
-            await sink.Append([CreateTrade("123", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero), 10m)], CancellationToken.None);
-
-            var upload = Assert.Single(uploads);
-            Assert.Equal("trades/raw/BTC-USDT/2026-03-12.jsonl", upload.ObjectKey);
-            Assert.Contains("\"tradeId\":\"123\"", upload.Payload, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"tradeId\":\"999\"", upload.Payload, StringComparison.Ordinal);
-            Assert.True(File.Exists(Path.Combine(instrumentDirectory, "qc-scratch.jsonl")));
-        }
-        finally
-        {
-            DeleteDirectory(localRoot);
-        }
+        Assert.False(acceptsTradeBatch);
+        Assert.True(typeof(ITradeFinalizedFileDispatcher).IsAssignableFrom(typeof(TradeSinkS3Simple)));
+        Assert.False(typeof(ITradeSinkLifecycle).IsAssignableFrom(typeof(TradeSinkS3Simple)));
     }
 
     private static Mock<IS3ObjectUploader> CreateUploaderMoq(out List<UploadCall> uploads)
@@ -155,20 +141,21 @@ public sealed class TradeSinkS3SimpleTests
         return result;
     }
 
-    private static Mock<IClock> CreateClockMoq(Func<DateTimeOffset> utcNowProvider)
-    {
-        var clockMoq = new Mock<IClock>();
-        clockMoq
-            .SetupGet(mock => mock.UtcNow)
-            .Returns(utcNowProvider);
-
-        return clockMoq;
-    }
-
     private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp, decimal price)
     {
         var key = new TradeKey(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), tradeId);
         return new TradeInfo(key, timestamp, price, quantity: 0.5m);
+    }
+
+    private static async Task WriteTradeFileAsync(string path, IReadOnlyList<TradeInfo> trades)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await File.WriteAllTextAsync(path, TradeJsonlFile.BuildPayload(trades), CancellationToken.None);
     }
 
     private static string CreateTempDirectory()
@@ -184,20 +171,6 @@ public sealed class TradeSinkS3SimpleTests
         {
             Directory.Delete(path, recursive: true);
         }
-    }
-
-    private static List<string?> ParseTradeIds(string payload)
-    {
-        var result = new List<string?>();
-        var lines = payload.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
-
-        foreach (var line in lines)
-        {
-            using var document = JsonDocument.Parse(line);
-            result.Add(document.RootElement.GetProperty("tradeId").GetString());
-        }
-
-        return result;
     }
 
     private sealed record UploadCall(string BucketName, string ObjectKey, string Payload);

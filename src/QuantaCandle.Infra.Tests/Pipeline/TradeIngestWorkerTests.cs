@@ -16,8 +16,8 @@ public sealed class TradeIngestWorkerTests
     public async Task FlushesWhenBatchSizeIsReached()
     {
         var options = CreateOptions(batchSize: 3);
-        var appends = new List<IReadOnlyList<TradeInfo>>();
-        var worker = CreateWorker(options, appends, new InMemoryIngestionStateStore(), out var stats, out _);
+        var checkpointLifecycle = new RecordingCheckpointLifecycle();
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out var stats, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -29,8 +29,8 @@ public sealed class TradeIngestWorkerTests
         channel.Writer.Complete();
         await run;
 
-        Assert.Single(appends);
-        Assert.Equal(3, appends[0].Count);
+        Assert.Single(checkpointLifecycle.TrackedTradeBatches);
+        Assert.Equal(3, checkpointLifecycle.TrackedTradeBatches[0].Count);
 
         var snapshot = stats.GetSnapshot();
         Assert.Equal(3, snapshot.TradesReceived);
@@ -43,8 +43,8 @@ public sealed class TradeIngestWorkerTests
     public async Task FlushesRemainingTradesOnShutdown()
     {
         var options = CreateOptions(batchSize: 3);
-        var appends = new List<IReadOnlyList<TradeInfo>>();
-        var worker = CreateWorker(options, appends, new InMemoryIngestionStateStore(), out var stats, out _);
+        var checkpointLifecycle = new RecordingCheckpointLifecycle();
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out var stats, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -55,8 +55,8 @@ public sealed class TradeIngestWorkerTests
         channel.Writer.Complete();
         await run;
 
-        Assert.Single(appends);
-        Assert.Equal(2, appends[0].Count);
+        Assert.Single(checkpointLifecycle.TrackedTradeBatches);
+        Assert.Equal(2, checkpointLifecycle.TrackedTradeBatches[0].Count);
 
         var snapshot = stats.GetSnapshot();
         Assert.Equal(2, snapshot.TradesReceived);
@@ -70,7 +70,7 @@ public sealed class TradeIngestWorkerTests
     {
         var options = CreateOptions(batchSize: 3);
         var checkpointLifecycle = new RecordingCheckpointLifecycle();
-        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out _);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -92,7 +92,7 @@ public sealed class TradeIngestWorkerTests
             CheckpointResult = true,
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -117,7 +117,7 @@ public sealed class TradeIngestWorkerTests
             CheckpointResult = false,
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -131,7 +131,7 @@ public sealed class TradeIngestWorkerTests
         using var stoppingCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
         var options = CreateOptions(batchSize: 3, checkpointInterval: TimeSpan.FromHours(1));
         var checkpointLifecycle = new RecordingCheckpointLifecycle();
-        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -152,7 +152,7 @@ public sealed class TradeIngestWorkerTests
         {
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out _);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -170,7 +170,7 @@ public sealed class TradeIngestWorkerTests
         {
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, new RecordingTradeSink(), new InMemoryIngestionStateStore(), checkpointSignal, checkpointLifecycle, out _, out _);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), checkpointSignal, checkpointLifecycle, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -188,7 +188,8 @@ public sealed class TradeIngestWorkerTests
         var options = CreateOptions(batchSize: 1);
         var appendObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stateStore = new BlockingIngestionStateStore();
-        var worker = CreateWorker(options, new List<IReadOnlyList<TradeInfo>>(), stateStore, out _, out _, appendObserved);
+        var checkpointLifecycle = new RecordingCheckpointLifecycle { AppendObserved = appendObserved };
+        var worker = CreateWorker(options, stateStore, new CheckpointSignal(), checkpointLifecycle, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -208,7 +209,7 @@ public sealed class TradeIngestWorkerTests
     {
         var options = CreateOptions(batchSize: 2);
         var stateStore = new RecordingIngestionStateStore();
-        var worker = CreateWorker(options, new List<IReadOnlyList<TradeInfo>>(), stateStore, out _, out _);
+        var worker = CreateWorker(options, stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -229,7 +230,7 @@ public sealed class TradeIngestWorkerTests
     {
         var options = CreateOptions(batchSize: 2);
         var stateStore = new InMemoryIngestionStateStore();
-        var worker = CreateWorker(options, new List<IReadOnlyList<TradeInfo>>(), stateStore, out _, out _);
+        var worker = CreateWorker(options, stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -261,7 +262,7 @@ public sealed class TradeIngestWorkerTests
             new TradeWatermark("100", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero)),
             CancellationToken.None);
 
-        var worker = CreateWorker(options, new List<IReadOnlyList<TradeInfo>>(), stateStore, out _, out _);
+        var worker = CreateWorker(options, stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -293,7 +294,7 @@ public sealed class TradeIngestWorkerTests
                 new DateOnly(2026, 3, 12),
                 "LatestLocalDailyFile"));
 
-        var worker = CreateWorker(options, new List<IReadOnlyList<TradeInfo>>(), stateStore, out _, out _);
+        var worker = CreateWorker(options, stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -318,7 +319,7 @@ public sealed class TradeIngestWorkerTests
     {
         var options = CreateOptions(batchSize: 4);
         var stateStore = new InMemoryIngestionStateStore();
-        var worker = CreateWorker(options, new List<IReadOnlyList<TradeInfo>>(), stateStore, out _, out _);
+        var worker = CreateWorker(options, stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -349,28 +350,6 @@ public sealed class TradeIngestWorkerTests
 
     private static TradeIngestWorker CreateWorker(
         CollectorOptions options,
-        List<IReadOnlyList<TradeInfo>> appends,
-        IIngestionStateStore ingestionStateStore,
-        out TradePipelineStats stats,
-        out Mock<ILogMachina<TradeIngestWorker>> logMoq,
-        TaskCompletionSource? appendObserved = null)
-    {
-        var tradeSinkMoq = new Mock<ITradeSink>();
-        tradeSinkMoq
-            .Setup(mock => mock.Append(It.IsAny<IReadOnlyList<TradeInfo>>(), It.IsAny<CancellationToken>()))
-            .Returns((IReadOnlyList<TradeInfo> trades, CancellationToken _) =>
-            {
-                appends.Add(trades);
-                appendObserved?.TrySetResult();
-                return ValueTask.FromResult(new TradeAppendResult(InsertedCount: trades.Count, DuplicateCount: 0));
-            });
-
-        return CreateWorker(options, tradeSinkMoq.Object, ingestionStateStore, new CheckpointSignal(), new RecordingCheckpointLifecycle(), out stats, out logMoq);
-    }
-
-    private static TradeIngestWorker CreateWorker(
-        CollectorOptions options,
-        ITradeSink tradeSink,
         IIngestionStateStore ingestionStateStore,
         ICheckpointSignal checkpointSignal,
         ITradeCheckpointLifecycle tradeCheckpointLifecycle,
@@ -381,19 +360,18 @@ public sealed class TradeIngestWorkerTests
         var deduplicator = new InMemoryTradeDeduplicator(options);
         logMoq = new Mock<ILogMachina<TradeIngestWorker>>();
 
-        var worker = new TradeIngestWorker(tradeSink, ingestionStateStore, checkpointSignal, tradeCheckpointLifecycle, deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(ingestionStateStore, checkpointSignal, tradeCheckpointLifecycle, deduplicator, stats, logMoq.Object);
 
         return worker;
     }
 
     private static TradeIngestWorker CreateWorker(
         CollectorOptions options,
-        ITradeSink tradeSink,
         IIngestionStateStore ingestionStateStore,
         out TradePipelineStats stats,
         out Mock<ILogMachina<TradeIngestWorker>> logMoq)
     {
-        return CreateWorker(options, tradeSink, ingestionStateStore, new CheckpointSignal(), new RecordingCheckpointLifecycle(), out stats, out logMoq);
+        return CreateWorker(options, ingestionStateStore, new CheckpointSignal(), new RecordingCheckpointLifecycle(), out stats, out logMoq);
     }
 
     private static TradeInfo CreateTrade(string tradeId, Instrument instrument, DateTimeOffset timestamp)
@@ -488,9 +466,15 @@ public sealed class TradeIngestWorkerTests
 
         public int TrackAppendedTradesCallCount { get; private set; }
 
+        public TaskCompletionSource? AppendObserved { get; init; }
+
+        public List<IReadOnlyList<TradeInfo>> TrackedTradeBatches { get; } = [];
+
         public ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
         {
             TrackAppendedTradesCallCount++;
+            TrackedTradeBatches.Add(trades.ToArray());
+            AppendObserved?.TrySetResult();
             return ValueTask.CompletedTask;
         }
 
@@ -510,11 +494,4 @@ public sealed class TradeIngestWorkerTests
         }
     }
 
-    private sealed class RecordingTradeSink : ITradeSink
-    {
-        public ValueTask<TradeAppendResult> Append(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
-        {
-            return ValueTask.FromResult(new TradeAppendResult(trades.Count, DuplicateCount: 0));
-        }
-    }
 }

@@ -8,7 +8,7 @@ namespace QuantaCandle.Infra.Pipeline;
 public interface ITradeCheckpointLifecycle
 {
     /// <summary>
-    /// Tracks trades that were durably appended to the destination sink and are eligible for checkpointing.
+    /// Tracks trades that were accepted by the ingest pipeline and are eligible for checkpointing.
     /// </summary>
     ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken);
 

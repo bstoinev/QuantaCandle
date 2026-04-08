@@ -9,6 +9,7 @@ namespace QuantaCandle.Infra.Pipeline;
 /// </summary>
 public sealed class TradeScratchCheckpointLifecycle(
     string localRootDirectory,
+    ITradeFinalizedFileDispatcher tradeFinalizedFileDispatcher,
     ITradeCheckpointBatchPreparator checkpointBatchPreparator,
     IIngestionStateStore ingestionStateStore,
     ILogMachina<TradeScratchCheckpointLifecycle> log) : ITradeCheckpointLifecycle
@@ -17,7 +18,7 @@ public sealed class TradeScratchCheckpointLifecycle(
     private readonly Dictionary<(ExchangeId Exchange, Instrument Symbol), List<TradeInfo>> _pendingTradesByInstrument = [];
 
     /// <summary>
-    /// Tracks trades that were appended to the destination sink and should participate in scratch checkpoints.
+    /// Tracks trades that should participate in scratch checkpoints.
     /// </summary>
     public ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
     {
@@ -165,6 +166,7 @@ public sealed class TradeScratchCheckpointLifecycle(
 
         log.Info($"Trade scratch checkpoint finalize: instrument={instrument}, utcDate={oldestUtcDate:yyyy-MM-dd}, path={finalizedPath}, tradeCount={finalizedTrades.Length}.");
         await TradeJsonlFile.RewritePayloadAsync(finalizedPath, finalizedPayload, cancellationToken).ConfigureAwait(false);
+        await tradeFinalizedFileDispatcher.DispatchAsync(instrument, oldestUtcDate, finalizedPath, cancellationToken).ConfigureAwait(false);
         log.Info($"Trade scratch checkpoint rollover: instrument={instrument}, path={scratchPath}, tradeCount={continuedScratchTrades.Length}.");
         await TradeJsonlFile.RewritePayloadAsync(scratchPath, scratchPayloadAfterSplit, cancellationToken).ConfigureAwait(false);
     }

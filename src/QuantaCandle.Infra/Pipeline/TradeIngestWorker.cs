@@ -8,7 +8,6 @@ using QuantaCandle.Infra.Options;
 namespace QuantaCandle.Infra.Pipeline;
 
 public sealed class TradeIngestWorker(
-    ITradeSink tradeSink,
     IIngestionStateStore ingestionStateStore,
     ICheckpointSignal checkpointSignal,
     ITradeCheckpointLifecycle tradeCheckpointLifecycle,
@@ -122,9 +121,7 @@ public sealed class TradeIngestWorker(
         {
             var snapshot = batch.ToArray();
             batch.Clear();
-
-            var appendResult = await tradeSink.Append(snapshot, cancellationToken).ConfigureAwait(false);
-            stats.OnBatchFlushed(appendResult.InsertedCount);
+            stats.OnBatchFlushed(snapshot.Length);
 
             var latestByInstrument = new Dictionary<(ExchangeId Exchange, Instrument Symbol), TradeWatermark>();
 

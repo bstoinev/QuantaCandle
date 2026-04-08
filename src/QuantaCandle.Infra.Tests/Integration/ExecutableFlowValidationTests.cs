@@ -80,9 +80,16 @@ public sealed class ExecutableFlowValidationTests
         var clockMoq = new Mock<IClock>();
         clockMoq
             .SetupGet(mock => mock.UtcNow)
-            .Returns(new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero));
+            .Returns(new DateTimeOffset(2026, 3, 11, 23, 59, 59, 500, TimeSpan.Zero));
+        var checkpointLifecycleLogMoq = new Mock<ILogMachina<TradeScratchCheckpointLifecycle>>();
+        var checkpointLifecycle = new TradeScratchCheckpointLifecycle(
+            tradeDirectory,
+            sink,
+            new TradeCheckpointBatchPreparator(),
+            stateStore,
+            checkpointLifecycleLogMoq.Object);
 
-        var worker = new TradeIngestWorker(sink, stateStore, new CheckpointSignal(), new NullTradeCheckpointLifecycle(), deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(stateStore, new CheckpointSignal(), checkpointLifecycle, deduplicator, stats, logMoq.Object);
         var source = new TradeSourceStub(new TradeSourceStubOptions(new ExchangeId("Stub"), 20, 50_000m, 0.01m, 0.001m), clockMoq.Object);
 
         using var sourceCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1_500));

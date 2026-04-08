@@ -1,4 +1,4 @@
-using System.Text.Json;
+using System.Reflection;
 
 using QuantaCandle.Core.Trading;
 
@@ -6,34 +6,26 @@ namespace QuantaCandle.Infra.Tests.Storage;
 
 public sealed class TradeSinkFileSimpleTests
 {
-    private const string StartupBoundaryTradeId = "_startup-day-boundary";
-
     [Fact]
-    public async Task Writes_to_instrument_and_day_partition_path()
+    public async Task DispatchUsesExistingFinalizedDailyFile()
     {
-        string root = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+
         try
         {
-            TradeSinkFileSimple sink = new TradeSinkFileSimple(new TradeSinkFileSimpleOptions(root));
+            var sink = new TradeSinkFileSimple(new TradeSinkFileSimpleOptions(root));
+            var instrument = Instrument.Parse("BTC-USDT");
+            var utcDate = new DateOnly(2026, 3, 12);
+            var finalizedPath = TradeLocalDailyFilePath.Build(root, instrument, utcDate);
+            var payload = TradeJsonlFile.BuildPayload([CreateTrade("123", utcDate)]);
 
-            Instrument instrument = Instrument.Parse("BTC-USDT");
-            DateTimeOffset timestamp = new DateTimeOffset(2026, 3, 12, 13, 37, 0, TimeSpan.Zero);
-            TradeKey key = new TradeKey(new ExchangeId("Stub"), instrument, "123");
-            TradeInfo trade = new TradeInfo(key, timestamp, price: 10m, quantity: 0.5m);
+            Directory.CreateDirectory(Path.GetDirectoryName(finalizedPath)!);
+            await File.WriteAllTextAsync(finalizedPath, payload, CancellationToken.None);
 
-            TradeAppendResult result = await sink.Append(new[] { trade }, CancellationToken.None);
-            Assert.Equal(1, result.InsertedCount);
+            await sink.DispatchAsync(instrument, utcDate, finalizedPath, CancellationToken.None);
 
-            string expectedPath = Path.Combine(root, "BTC-USDT", "2026-03-12.jsonl");
-            Assert.True(File.Exists(expectedPath));
-
-            string[] lines = await File.ReadAllLinesAsync(expectedPath, CancellationToken.None);
-            Assert.Single(lines);
-
-            using JsonDocument doc = JsonDocument.Parse(lines[0]);
-            Assert.Equal("Stub", doc.RootElement.GetProperty("exchange").GetString());
-            Assert.Equal("BTC-USDT", doc.RootElement.GetProperty("instrument").GetString());
-            Assert.Equal("123", doc.RootElement.GetProperty("tradeId").GetString());
+            Assert.True(File.Exists(finalizedPath));
+            Assert.Equal(payload, await File.ReadAllTextAsync(finalizedPath, CancellationToken.None));
         }
         finally
         {
@@ -45,26 +37,20 @@ public sealed class TradeSinkFileSimpleTests
     }
 
     [Fact]
-    public async Task PersistedJsonlContainsOnlyRealTrades()
+    public async Task DispatchRejectsUnexpectedFinalizedPath()
     {
-        string root = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+
         try
         {
-            TradeSinkFileSimple sink = new TradeSinkFileSimple(new TradeSinkFileSimpleOptions(root));
+            var sink = new TradeSinkFileSimple(new TradeSinkFileSimpleOptions(root));
+            var instrument = Instrument.Parse("BTC-USDT");
+            var unexpectedPath = Path.Combine(root, "other", "2026-03-12.jsonl");
 
-            Instrument instrument = Instrument.Parse("BTC-USDT");
-            TradeInfo trade = new TradeInfo(
-                new TradeKey(new ExchangeId("Stub"), instrument, "123"),
-                new DateTimeOffset(2026, 3, 12, 13, 37, 0, TimeSpan.Zero),
-                price: 10m,
-                quantity: 0.5m);
+            Directory.CreateDirectory(Path.GetDirectoryName(unexpectedPath)!);
+            await File.WriteAllTextAsync(unexpectedPath, "{}", CancellationToken.None);
 
-            await sink.Append([trade], CancellationToken.None);
-
-            string expectedPath = Path.Combine(root, "BTC-USDT", "2026-03-12.jsonl");
-            string payload = await File.ReadAllTextAsync(expectedPath, CancellationToken.None);
-
-            Assert.DoesNotContain(StartupBoundaryTradeId, payload, StringComparison.Ordinal);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(instrument, new DateOnly(2026, 3, 12), unexpectedPath, CancellationToken.None).AsTask());
         }
         finally
         {
@@ -73,5 +59,24 @@ public sealed class TradeSinkFileSimpleTests
                 Directory.Delete(root, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public void TradeSinkFileSimpleDoesNotAcceptTradeBatchInputs()
+    {
+        var acceptsTradeBatch = typeof(TradeSinkFileSimple)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .SelectMany(method => method.GetParameters())
+            .Any(parameter => parameter.ParameterType == typeof(IReadOnlyList<TradeInfo>));
+
+        Assert.False(acceptsTradeBatch);
+        Assert.True(typeof(ITradeFinalizedFileDispatcher).IsAssignableFrom(typeof(TradeSinkFileSimple)));
+    }
+
+    private static TradeInfo CreateTrade(string tradeId, DateOnly utcDate)
+    {
+        var key = new TradeKey(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), tradeId);
+        var timestamp = new DateTimeOffset(utcDate.Year, utcDate.Month, utcDate.Day, 13, 37, 0, TimeSpan.Zero);
+        return new TradeInfo(key, timestamp, price: 10m, quantity: 0.5m);
     }
 }

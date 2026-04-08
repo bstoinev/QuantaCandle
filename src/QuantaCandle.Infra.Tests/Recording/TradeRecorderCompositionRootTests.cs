@@ -37,7 +37,7 @@ public sealed class TradeRecorderCompositionRootTests
             var ingestionStateStore = container.GetInstance<IIngestionStateStore>();
             var checkpointLifecycle = container.GetInstance<ITradeCheckpointLifecycle>();
             var uploader = container.GetInstance<IS3ObjectUploader>();
-            var sink = container.GetInstance<ITradeSink>();
+            var sink = container.GetInstance<ITradeFinalizedFileDispatcher>();
 
             Assert.IsType<LocalFileIngestionStateStore>(ingestionStateStore);
             Assert.IsType<TradeScratchCheckpointLifecycle>(checkpointLifecycle);

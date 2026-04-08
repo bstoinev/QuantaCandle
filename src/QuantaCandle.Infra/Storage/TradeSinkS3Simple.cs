@@ -6,23 +6,20 @@ using QuantaCandle.Core.Trading;
 namespace QuantaCandle.Infra;
 
 /// <summary>
-/// Writes trades to deterministic local day files and uploads completed UTC days to S3.
+/// Uploads finalized local UTC day trade files to S3.
 /// </summary>
-public sealed class TradeSinkS3Simple : ITradeSink
+public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher
 {
     private readonly ILogMachina<TradeSinkS3Simple> _log;
     private readonly TradeSinkS3SimpleOptions _options;
     private readonly IS3ObjectUploader _uploader;
-    private readonly IClock _clock;
-
     /// <summary>
     /// Initializes the S3 trade sink.
     /// </summary>
-    public TradeSinkS3Simple(TradeSinkS3SimpleOptions options, IS3ObjectUploader uploader, IClock clock, ILogMachina<TradeSinkS3Simple> log)
+    public TradeSinkS3Simple(TradeSinkS3SimpleOptions options, IS3ObjectUploader uploader, ILogMachina<TradeSinkS3Simple> log)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _uploader = uploader ?? throw new ArgumentNullException(nameof(uploader));
-        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _log = log ?? throw new ArgumentNullException(nameof(log));
 
         if (string.IsNullOrWhiteSpace(_options.BucketName))
@@ -37,76 +34,30 @@ public sealed class TradeSinkS3Simple : ITradeSink
     }
 
     /// <summary>
-    /// Appends trades to deterministic local day files and uploads any completed UTC day files.
+    /// Uploads the supplied finalized local day file to S3 and deletes it only after success.
     /// </summary>
-    public async ValueTask<TradeAppendResult> Append(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+    public async ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
     {
-        var insertedCount = trades.Count;
-        if (insertedCount == 0)
+        ArgumentException.ThrowIfNullOrWhiteSpace(finalizedFilePath);
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var payload = await File.ReadAllTextAsync(finalizedFilePath, cancellationToken).ConfigureAwait(false);
+        var objectKey = TradeSinkS3DailyObjectKey.Build(_options.Prefix, instrument.ToString(), utcDate);
+        _log.Info($"Trade S3 upload start: bucket={_options.BucketName}, objectKey={objectKey}, path={finalizedFilePath}.");
+
+        try
         {
-            return new TradeAppendResult(InsertedCount: 0, DuplicateCount: 0);
+            await _uploader.UploadTextAsync(_options.BucketName, objectKey, payload, cancellationToken).ConfigureAwait(false);
+            _log.Info($"Trade S3 upload success: bucket={_options.BucketName}, objectKey={objectKey}.");
+            File.Delete(finalizedFilePath);
+            _log.Info($"Trade S3 local delete after upload: path={finalizedFilePath}.");
         }
-
-        var byPath = new Dictionary<string, List<TradeInfo>>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var trade in trades)
+        catch (Exception ex)
         {
-            var utcDate = DateOnly.FromDateTime(trade.Timestamp.UtcDateTime);
-            var localPath = TradeLocalDailyFilePath.Build(_options.LocalRootDirectory, trade.Key.Symbol, utcDate);
-
-            if (!byPath.TryGetValue(localPath, out var list))
-            {
-                list = [];
-                byPath[localPath] = list;
-            }
-
-            list.Add(trade);
-        }
-
-        foreach (var pair in byPath)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var payload = TradeJsonlFile.BuildPayload(pair.Value);
-            await TradeJsonlFile.AppendPayloadAsync(pair.Key, payload, cancellationToken).ConfigureAwait(false);
-        }
-
-        var currentUtcDate = DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime);
-        await UploadCompletedDays(currentUtcDate, cancellationToken).ConfigureAwait(false);
-
-        return new TradeAppendResult(insertedCount, DuplicateCount: 0);
-    }
-
-    /// <summary>
-    /// Discovers completed day local files, uploads them to S3, and deletes them from local storage only after success.
-    /// </summary>
-    private async Task UploadCompletedDays(DateOnly currentUtcDate, CancellationToken cancellationToken)
-    {
-        var discoveredFiles = TradeLocalDailyFilePath.DiscoverCompleted(_options.LocalRootDirectory, currentUtcDate);
-
-        foreach (var discoveredFile in discoveredFiles)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            _log.Info($"Trade S3 discovered completed local file: instrument={discoveredFile.Instrument}, utcDate={discoveredFile.UtcDate:yyyy-MM-dd}, path={discoveredFile.Path}.");
-
-            var payload = await File.ReadAllTextAsync(discoveredFile.Path, cancellationToken).ConfigureAwait(false);
-            var objectKey = TradeSinkS3DailyObjectKey.Build(_options.Prefix, discoveredFile.Instrument.ToString(), discoveredFile.UtcDate);
-            _log.Info($"Trade S3 upload start: bucket={_options.BucketName}, objectKey={objectKey}, path={discoveredFile.Path}.");
-
-            try
-            {
-                await _uploader.UploadTextAsync(_options.BucketName, objectKey, payload, cancellationToken).ConfigureAwait(false);
-                _log.Info($"Trade S3 upload success: bucket={_options.BucketName}, objectKey={objectKey}.");
-                File.Delete(discoveredFile.Path);
-                _log.Info($"Trade S3 local delete after upload: path={discoveredFile.Path}.");
-            }
-            catch (Exception ex)
-            {
-                _log.Warn($"Trade S3 upload failure: bucket={_options.BucketName}, objectKey={objectKey}, path={discoveredFile.Path}.");
-                _log.Error(ex);
-                throw;
-            }
+            _log.Warn($"Trade S3 upload failure: bucket={_options.BucketName}, objectKey={objectKey}, path={finalizedFilePath}.");
+            _log.Error(ex);
+            throw;
         }
     }
 }

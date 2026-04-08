@@ -12,7 +12,7 @@ namespace QuantaCandle.Infra.Tests.Pipeline;
 
 public sealed class TradeDeduplicationTests
 {
-    private readonly List<IReadOnlyList<TradeInfo>> _appends = new();
+    private readonly RecordingCheckpointLifecycle _checkpointLifecycle = new();
     private readonly TradePipelineStats _stats = new();
     private readonly CollectorOptions _options = new CollectorOptions(["BTC-USDT"], 10, 1000, TimeSpan.FromHours(1), TimeSpan.FromHours(1), 100);
     private readonly TradeIngestWorker _worker;
@@ -22,7 +22,7 @@ public sealed class TradeDeduplicationTests
 
     public TradeDeduplicationTests()
     {
-        _worker = CreateWorker(_options, _appends, _stats);
+        _worker = CreateWorker(_options, _checkpointLifecycle, _stats);
     }
 
     [Fact]
@@ -40,8 +40,8 @@ public sealed class TradeDeduplicationTests
         _channel.Writer.Complete();
         await run;
 
-        Assert.Single(_appends);
-        Assert.Equal(2, _appends[0].Count);
+        Assert.Single(_checkpointLifecycle.TrackedTradeBatches);
+        Assert.Equal(2, _checkpointLifecycle.TrackedTradeBatches[0].Count);
 
         var snapshot = _stats.GetSnapshot();
         Assert.Equal(3, snapshot.TradesReceived);
@@ -64,8 +64,8 @@ public sealed class TradeDeduplicationTests
         _channel.Writer.Complete();
         await test;
 
-        Assert.Single(_appends);
-        Assert.Equal(3, _appends[0].Count);
+        Assert.Single(_checkpointLifecycle.TrackedTradeBatches);
+        Assert.Equal(3, _checkpointLifecycle.TrackedTradeBatches[0].Count);
 
         var snapshot = _stats.GetSnapshot();
 
@@ -115,8 +115,8 @@ public sealed class TradeDeduplicationTests
         _channel.Writer.Complete();
         await test;
 
-        Assert.Single(_appends);
-        Assert.Equal(2, _appends[0].Count);
+        Assert.Single(_checkpointLifecycle.TrackedTradeBatches);
+        Assert.Equal(2, _checkpointLifecycle.TrackedTradeBatches[0].Count);
 
         var snapshot = _stats.GetSnapshot();
 
@@ -126,18 +126,9 @@ public sealed class TradeDeduplicationTests
 
     private static TradeIngestWorker CreateWorker(
         CollectorOptions options,
-        List<IReadOnlyList<TradeInfo>> appends,
+        RecordingCheckpointLifecycle checkpointLifecycle,
         TradePipelineStats stats)
     {
-        var tradeSinkMoq = new Mock<ITradeSink>();
-        tradeSinkMoq
-            .Setup(mock => mock.Append(It.IsAny<IReadOnlyList<TradeInfo>>(), It.IsAny<CancellationToken>()))
-            .Returns((IReadOnlyList<TradeInfo> trades, CancellationToken _) =>
-            {
-                appends.Add(trades);
-                return ValueTask.FromResult(new TradeAppendResult(InsertedCount: trades.Count, DuplicateCount: 0));
-            });
-
         var stateStoreMoq = new Mock<IIngestionStateStore>();
         stateStoreMoq
             .Setup(mock => mock.GetResumeBoundaryAsync(It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), It.IsAny<CancellationToken>()))
@@ -149,7 +140,7 @@ public sealed class TradeDeduplicationTests
         var deduplicator = new InMemoryTradeDeduplicator(options);
         var logMoq = new Mock<ILogMachina<TradeIngestWorker>>();
 
-        var worker = new TradeIngestWorker(tradeSinkMoq.Object, stateStoreMoq.Object, new CheckpointSignal(), new NullTradeCheckpointLifecycle(), deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(stateStoreMoq.Object, new CheckpointSignal(), checkpointLifecycle, deduplicator, stats, logMoq.Object);
         return worker;
     }
 
@@ -157,6 +148,27 @@ public sealed class TradeDeduplicationTests
     {
         var key = new TradeKey(new ExchangeId("Stub"), instrument, tradeId);
         return new TradeInfo(key, timestamp, price: 1m, quantity: 1m);
+    }
+
+    private sealed class RecordingCheckpointLifecycle : ITradeCheckpointLifecycle
+    {
+        public List<IReadOnlyList<TradeInfo>> TrackedTradeBatches { get; } = [];
+
+        public ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+        {
+            TrackedTradeBatches.Add(trades.ToArray());
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<bool> CheckpointActive(CancellationToken cancellationToken)
+        {
+            return ValueTask.FromResult(false);
+        }
+
+        public ValueTask FlushOnShutdown(CancellationToken cancellationToken)
+        {
+            return ValueTask.CompletedTask;
+        }
     }
 }
 

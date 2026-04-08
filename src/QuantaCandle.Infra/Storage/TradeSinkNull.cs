@@ -1,15 +1,20 @@
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 using QuantaCandle.Core.Trading;
 
 namespace QuantaCandle.Infra;
 
-public sealed class TradeSinkNull : ITradeSink
+/// <summary>
+/// Ignores finalized local daily files.
+/// </summary>
+public sealed class TradeSinkNull : ITradeFinalizedFileDispatcher
 {
-    public ValueTask<TradeAppendResult> Append(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+    /// <summary>
+    /// Ignores the supplied finalized file.
+    /// </summary>
+    public ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
     {
-        TradeAppendResult result = new TradeAppendResult(InsertedCount: trades.Count, DuplicateCount: 0);
-        return ValueTask.FromResult(result);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var result = ValueTask.CompletedTask;
+        return result;
     }
 }

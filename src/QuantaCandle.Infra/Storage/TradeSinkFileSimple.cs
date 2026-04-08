@@ -1,76 +1,47 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+
 using QuantaCandle.Core.Trading;
 
 namespace QuantaCandle.Infra;
 
-public sealed class TradeSinkFileSimple : ITradeSink
+/// <summary>
+/// Uses the finalized local daily file as the terminal destination for file-based recording.
+/// </summary>
+public sealed class TradeSinkFileSimple : ITradeFinalizedFileDispatcher
 {
-    private readonly TradeSinkFileSimpleOptions options;
+    private readonly TradeSinkFileSimpleOptions _options;
 
+    /// <summary>
+    /// Initializes the file-based finalized file dispatcher.
+    /// </summary>
     public TradeSinkFileSimple(TradeSinkFileSimpleOptions options)
     {
-        this.options = options;
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
-    public async ValueTask<TradeAppendResult> Append(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+    /// <summary>
+    /// Confirms that the supplied finalized local daily file exists beneath the configured output directory.
+    /// </summary>
+    public ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
     {
-        int insertedCount = trades.Count;
+        ArgumentException.ThrowIfNullOrWhiteSpace(finalizedFilePath);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        Dictionary<string, List<TradeInfo>> byPath = new Dictionary<string, List<TradeInfo>>(StringComparer.OrdinalIgnoreCase);
-        foreach (TradeInfo trade in trades)
+        var expectedPath = TradeLocalDailyFilePath.Build(_options.OutputDirectory, instrument, utcDate);
+        if (!string.Equals(expectedPath, finalizedFilePath, StringComparison.OrdinalIgnoreCase))
         {
-            string instrumentDirectory = Path.Combine(options.OutputDirectory, trade.Key.Symbol.ToString());
-            string day = trade.Timestamp.UtcDateTime.ToString("yyyy-MM-dd");
-            string fileName = $"{day}.jsonl";
-            string path = Path.Combine(instrumentDirectory, fileName);
-
-            if (!byPath.TryGetValue(path, out List<TradeInfo>? list))
-            {
-                list = new List<TradeInfo>();
-                byPath[path] = list;
-            }
-
-            list.Add(trade);
+            throw new InvalidOperationException($"Finalized file path must match the configured output directory. Expected '{expectedPath}', actual '{finalizedFilePath}'.");
         }
 
-        foreach (KeyValuePair<string, List<TradeInfo>> kvp in byPath)
+        if (!File.Exists(finalizedFilePath))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            string? directory = Path.GetDirectoryName(kvp.Key);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            List<TradeInfo> list = kvp.Value;
-            string[] lines = new string[list.Count];
-            for (int i = 0; i < list.Count; i++)
-            {
-                TradeInfo trade = list[i];
-
-                var record = new
-                {
-                    exchange = trade.Key.Exchange.ToString(),
-                    instrument = trade.Key.Symbol.ToString(),
-                    tradeId = trade.Key.TradeId,
-                    timestamp = trade.Timestamp,
-                    price = trade.Price,
-                    quantity = trade.Quantity,
-                };
-
-                lines[i] = JsonSerializer.Serialize(record);
-            }
-
-            string payload = string.Join(Environment.NewLine, lines) + Environment.NewLine;
-            await File.AppendAllTextAsync(kvp.Key, payload, cancellationToken).ConfigureAwait(false);
+            throw new FileNotFoundException("The finalized local daily trade file does not exist.", finalizedFilePath);
         }
 
-        return new TradeAppendResult(insertedCount, DuplicateCount: 0);
+        var result = ValueTask.CompletedTask;
+        return result;
     }
 }

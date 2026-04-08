@@ -156,6 +156,37 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
+    public async Task CheckpointCrossingUtcMidnightDispatchesTheFinalizedDailyFile()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var dispatcher = new RecordingTradeFinalizedFileDispatcher();
+            var (lifecycle, _) = CreateLifecycle(localRoot, dispatcher);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero)),
+            ], CancellationToken.None);
+
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var dispatch = Assert.Single(dispatcher.Dispatches);
+            Assert.Equal(Instrument.Parse("BTC-USDT"), dispatch.Instrument);
+            Assert.Equal(new DateOnly(2026, 3, 12), dispatch.UtcDate);
+            Assert.Equal(TradeLocalDailyFilePath.Build(localRoot, dispatch.Instrument, dispatch.UtcDate), dispatch.FinalizedFilePath);
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
     public async Task CrossMidnightRolloverStillWorksAfterBatchPreparation()
     {
         var localRoot = CreateTempDirectory();
@@ -378,12 +409,14 @@ public sealed class TradeScratchCheckpointLifecycleTests
         }
     }
 
-    private static (TradeScratchCheckpointLifecycle Lifecycle, InMemoryIngestionStateStore StateStore) CreateLifecycle(string localRoot)
+    private static (TradeScratchCheckpointLifecycle Lifecycle, InMemoryIngestionStateStore StateStore) CreateLifecycle(
+        string localRoot,
+        ITradeFinalizedFileDispatcher? tradeFinalizedFileDispatcher = null)
     {
         var logMoq = new Mock<ILogMachina<TradeScratchCheckpointLifecycle>>();
         var stateStore = new InMemoryIngestionStateStore();
         var preparator = new TradeCheckpointBatchPreparator();
-        var result = new TradeScratchCheckpointLifecycle(localRoot, preparator, stateStore, logMoq.Object);
+        var result = new TradeScratchCheckpointLifecycle(localRoot, tradeFinalizedFileDispatcher ?? new TradeSinkNull(), preparator, stateStore, logMoq.Object);
         return (result, stateStore);
     }
 
@@ -421,4 +454,17 @@ public sealed class TradeScratchCheckpointLifecycleTests
             Directory.Delete(path, recursive: true);
         }
     }
+
+    private sealed class RecordingTradeFinalizedFileDispatcher : ITradeFinalizedFileDispatcher
+    {
+        public List<DispatchCall> Dispatches { get; } = [];
+
+        public ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
+        {
+            Dispatches.Add(new DispatchCall(instrument, utcDate, finalizedFilePath));
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed record DispatchCall(Instrument Instrument, DateOnly UtcDate, string FinalizedFilePath);
 }
