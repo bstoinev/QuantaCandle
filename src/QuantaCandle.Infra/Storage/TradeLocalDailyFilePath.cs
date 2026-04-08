@@ -37,6 +37,24 @@ public static class TradeLocalDailyFilePath
     }
 
     /// <summary>
+    /// Validates that the supplied path matches the finalized local JSONL path for the specified instrument UTC day.
+    /// </summary>
+    public static string ValidateFinalized(string localRootDirectory, Instrument instrument, DateOnly utcDate, string finalizedFilePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(localRootDirectory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(finalizedFilePath);
+
+        var expectedPath = Build(localRootDirectory, instrument, utcDate);
+        if (!string.Equals(expectedPath, finalizedFilePath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Finalized file path must match the configured output directory. Expected '{expectedPath}', actual '{finalizedFilePath}'.");
+        }
+
+        var result = expectedPath;
+        return result;
+    }
+
+    /// <summary>
     /// Discovers completed local day files across all instrument folders beneath the local root directory.
     /// </summary>
     public static IReadOnlyList<CompletedDayLocalFile> DiscoverCompleted(string localRootDirectory, DateOnly activeUtcDate)

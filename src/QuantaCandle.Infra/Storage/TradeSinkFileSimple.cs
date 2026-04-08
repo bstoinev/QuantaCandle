@@ -30,11 +30,7 @@ public sealed class TradeSinkFileSimple : ITradeFinalizedFileDispatcher
         ArgumentException.ThrowIfNullOrWhiteSpace(finalizedFilePath);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var expectedPath = TradeLocalDailyFilePath.Build(_options.OutputDirectory, instrument, utcDate);
-        if (!string.Equals(expectedPath, finalizedFilePath, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException($"Finalized file path must match the configured output directory. Expected '{expectedPath}', actual '{finalizedFilePath}'.");
-        }
+        _ = TradeLocalDailyFilePath.ValidateFinalized(_options.OutputDirectory, instrument, utcDate, finalizedFilePath);
 
         if (!File.Exists(finalizedFilePath))
         {

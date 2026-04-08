@@ -110,6 +110,31 @@ public sealed class TradeSinkS3SimpleTests
     }
 
     [Fact]
+    public async Task DispatchRejectsScratchPath()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var uploaderMoq = CreateUploaderMoq(out _);
+            var sink = new TradeSinkS3Simple(
+                new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
+                uploaderMoq.Object,
+                CreateLogMoq().Object);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
+
+            await WriteTradeFileAsync(scratchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(instrument, new DateOnly(2026, 3, 11), scratchPath, CancellationToken.None).AsTask());
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
     public void TradeSinkS3SimpleDoesNotAcceptTradeBatchInputs()
     {
         var acceptsTradeBatch = typeof(TradeSinkS3Simple)

@@ -62,6 +62,31 @@ public sealed class TradeSinkFileSimpleTests
     }
 
     [Fact]
+    public async Task DispatchRejectsScratchPath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            var sink = new TradeSinkFileSimple(new TradeSinkFileSimpleOptions(root));
+            var instrument = Instrument.Parse("BTC-USDT");
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(root, instrument);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(scratchPath)!);
+            await File.WriteAllTextAsync(scratchPath, "{}", CancellationToken.None);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(instrument, new DateOnly(2026, 3, 12), scratchPath, CancellationToken.None).AsTask());
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void TradeSinkFileSimpleDoesNotAcceptTradeBatchInputs()
     {
         var acceptsTradeBatch = typeof(TradeSinkFileSimple)

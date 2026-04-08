@@ -41,6 +41,7 @@ public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher
         ArgumentException.ThrowIfNullOrWhiteSpace(finalizedFilePath);
 
         cancellationToken.ThrowIfCancellationRequested();
+        _ = TradeLocalDailyFilePath.ValidateFinalized(_options.LocalRootDirectory, instrument, utcDate, finalizedFilePath);
 
         var payload = await File.ReadAllTextAsync(finalizedFilePath, cancellationToken).ConfigureAwait(false);
         var objectKey = TradeSinkS3DailyObjectKey.Build(_options.Prefix, instrument.ToString(), utcDate);

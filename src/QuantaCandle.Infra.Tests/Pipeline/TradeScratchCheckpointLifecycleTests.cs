@@ -151,6 +151,8 @@ public sealed class TradeScratchCheckpointLifecycleTests
             ], CancellationToken.None);
             await lifecycle.CheckpointActive(CancellationToken.None);
 
+            Assert.Empty(dispatcher.Dispatches);
+
             await lifecycle.TrackAppendedTrades(
             [
                 CreateTrade("3", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero)),
