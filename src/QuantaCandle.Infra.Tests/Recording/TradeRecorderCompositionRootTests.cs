@@ -28,9 +28,11 @@ public sealed class TradeRecorderCompositionRootTests
         container.Verify();
 
         var checkpointLifecycle = container.GetInstance<ITradeCheckpointLifecycle>();
+        var startupTask = container.GetInstance<ITradeRecorderStartupTask>();
         var sink = container.GetInstance<ITradeFinalizedFileDispatcher>();
 
         Assert.IsType<TradeScratchCheckpointLifecycle>(checkpointLifecycle);
+        Assert.IsType<TradeFinalizedFileStartupDispatcher>(startupTask);
         Assert.IsType<TradeSinkFileSimple>(sink);
     }
 
@@ -50,9 +52,11 @@ public sealed class TradeRecorderCompositionRootTests
         container.Verify();
 
         var checkpointLifecycle = container.GetInstance<ITradeCheckpointLifecycle>();
+        var startupTask = container.GetInstance<ITradeRecorderStartupTask>();
         var sink = container.GetInstance<ITradeFinalizedFileDispatcher>();
 
         Assert.IsType<NullTradeCheckpointLifecycle>(checkpointLifecycle);
+        Assert.IsType<NullTradeRecorderStartupTask>(startupTask);
         Assert.IsType<TradeSinkNull>(sink);
     }
 
@@ -79,11 +83,13 @@ public sealed class TradeRecorderCompositionRootTests
 
             var ingestionStateStore = container.GetInstance<IIngestionStateStore>();
             var checkpointLifecycle = container.GetInstance<ITradeCheckpointLifecycle>();
+            var startupTask = container.GetInstance<ITradeRecorderStartupTask>();
             var uploader = container.GetInstance<IS3ObjectUploader>();
             var sink = container.GetInstance<ITradeFinalizedFileDispatcher>();
 
             Assert.IsType<LocalFileIngestionStateStore>(ingestionStateStore);
             Assert.IsType<TradeScratchCheckpointLifecycle>(checkpointLifecycle);
+            Assert.IsType<TradeFinalizedFileStartupDispatcher>(startupTask);
             Assert.IsType<AwsS3Uploader>(uploader);
             Assert.IsType<TradeSinkS3Simple>(sink);
         }

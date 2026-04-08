@@ -55,57 +55,39 @@ public static class TradeLocalDailyFilePath
     }
 
     /// <summary>
-    /// Discovers completed local day files across all instrument folders beneath the local root directory.
+    /// Discovers completed local day files for one configured instrument directory.
     /// </summary>
-    public static IReadOnlyList<CompletedDayLocalFile> DiscoverCompleted(string localRootDirectory, DateOnly activeUtcDate)
+    public static IReadOnlyList<CompletedDayLocalFile> DiscoverCompleted(string localRootDirectory, Instrument instrument)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localRootDirectory);
 
         var result = new List<CompletedDayLocalFile>();
+        var instrumentDirectory = Path.Combine(localRootDirectory, instrument.ToString());
 
-        if (!Directory.Exists(localRootDirectory))
+        if (!Directory.Exists(instrumentDirectory))
         {
             return result;
         }
 
-        foreach (var instrumentDirectory in Directory.EnumerateDirectories(localRootDirectory))
+        foreach (var filePath in Directory.EnumerateFiles(instrumentDirectory, "*.jsonl", SearchOption.TopDirectoryOnly))
         {
-            var instrumentName = Path.GetFileName(instrumentDirectory);
-            if (string.IsNullOrWhiteSpace(instrumentName))
+            var fileName = Path.GetFileName(filePath);
+            if (string.Equals(fileName, "qc-scratch.jsonl", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            Instrument instrument;
-            try
-            {
-                instrument = Instrument.Parse(instrumentName);
-            }
-            catch (ArgumentException)
+            var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(filePath);
+            if (!DateOnly.TryParseExact(fileNameWithoutExtension, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var utcDate))
             {
                 continue;
             }
 
-            foreach (var filePath in Directory.EnumerateFiles(instrumentDirectory, "*.jsonl", SearchOption.TopDirectoryOnly))
-            {
-                var fileName = Path.GetFileNameWithoutExtension(filePath);
-                if (!DateOnly.TryParseExact(fileName, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var utcDate))
-                {
-                    continue;
-                }
-
-                if (utcDate >= activeUtcDate)
-                {
-                    continue;
-                }
-
-                result.Add(new CompletedDayLocalFile(instrument, utcDate, filePath));
-            }
+            result.Add(new CompletedDayLocalFile(instrument, utcDate, filePath));
         }
 
         result = result
-            .OrderBy(item => item.Instrument.ToString(), StringComparer.Ordinal)
-            .ThenBy(item => item.UtcDate)
+            .OrderBy(item => item.UtcDate)
             .ToList();
 
         return result;
