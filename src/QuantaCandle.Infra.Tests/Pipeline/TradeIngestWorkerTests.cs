@@ -270,6 +270,56 @@ public sealed class TradeIngestWorkerTests
     }
 
     [Fact]
+    public async Task SnapshotCheckpointRunsNormalCheckpointBeforeSnapshotDispatch()
+    {
+        using var stoppingCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var checkpointSignal = new CheckpointSignal();
+        var options = CreateOptions(batchSize: 1, checkpointInterval: TimeSpan.FromHours(1));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle
+        {
+            CheckpointResult = true,
+            OnSnapshotDispatch = stoppingCts.Cancel,
+        };
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), checkpointSignal, checkpointLifecycle, cacheSize: 3, out _, out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        var run = worker.Run(channel.Reader, options, stoppingCts.Token);
+
+        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
+        checkpointSignal.Signal(CheckpointRequestKind.Snapshot);
+
+        await run;
+
+        Assert.Equal(["TrackAppendedTrades", "CheckpointActive", "DispatchActiveSnapshot", "FlushOnShutdown"], checkpointLifecycle.Events);
+        Assert.Equal(1, checkpointLifecycle.CheckpointCallCount);
+        Assert.Equal(1, checkpointLifecycle.SnapshotDispatchCallCount);
+    }
+
+    [Fact]
+    public async Task SnapshotCheckpointDoesNotDispatchSnapshotWhenCheckpointFails()
+    {
+        using var stoppingCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var checkpointSignal = new CheckpointSignal();
+        var options = CreateOptions(batchSize: 1, checkpointInterval: TimeSpan.FromHours(1));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle
+        {
+            CheckpointResult = false,
+            OnCheckpoint = stoppingCts.Cancel,
+        };
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), checkpointSignal, checkpointLifecycle, cacheSize: 3, out _, out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        var run = worker.Run(channel.Reader, options, stoppingCts.Token);
+
+        checkpointSignal.Signal(CheckpointRequestKind.Snapshot);
+
+        await run;
+
+        Assert.Equal(1, checkpointLifecycle.CheckpointCallCount);
+        Assert.Equal(0, checkpointLifecycle.SnapshotDispatchCallCount);
+    }
+
+    [Fact]
     public async Task LiveIngestionBeginsImmediatelyWithoutWaitingForRecovery()
     {
         var options = CreateOptions(batchSize: 1);
@@ -550,7 +600,11 @@ public sealed class TradeIngestWorkerTests
 
         public Action? OnCheckpoint { get; init; }
 
+        public Action? OnSnapshotDispatch { get; init; }
+
         public int CheckpointCallCount { get; private set; }
+
+        public int SnapshotDispatchCallCount { get; private set; }
 
         public int ShutdownFlushCallCount { get; private set; }
 
@@ -558,10 +612,13 @@ public sealed class TradeIngestWorkerTests
 
         public TaskCompletionSource? AppendObserved { get; init; }
 
+        public List<string> Events { get; } = [];
+
         public List<IReadOnlyList<TradeInfo>> TrackedTradeBatches { get; } = [];
 
         public ValueTask<int> TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
         {
+            Events.Add(nameof(TrackAppendedTrades));
             TrackAppendedTradesCallCount++;
             TrackedTradeBatches.Add(trades.ToArray());
             _trackedTradeCount += trades.Count;
@@ -571,6 +628,7 @@ public sealed class TradeIngestWorkerTests
 
         public ValueTask<bool> CheckpointActive(CancellationToken cancellationToken)
         {
+            Events.Add(nameof(CheckpointActive));
             CheckpointCallCount++;
             if (_trackedTradeCount > 0)
             {
@@ -583,8 +641,19 @@ public sealed class TradeIngestWorkerTests
             return result;
         }
 
+        public ValueTask<bool> DispatchActiveSnapshot(CancellationToken cancellationToken)
+        {
+            Events.Add(nameof(DispatchActiveSnapshot));
+            SnapshotDispatchCallCount++;
+            OnSnapshotDispatch?.Invoke();
+
+            var result = ValueTask.FromResult(true);
+            return result;
+        }
+
         public ValueTask FlushOnShutdown(CancellationToken cancellationToken)
         {
+            Events.Add(nameof(FlushOnShutdown));
             ShutdownFlushCallCount++;
             return ValueTask.CompletedTask;
         }

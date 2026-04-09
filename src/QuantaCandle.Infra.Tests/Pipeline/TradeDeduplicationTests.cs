@@ -165,6 +165,11 @@ public sealed class TradeDeduplicationTests
             return ValueTask.FromResult(false);
         }
 
+        public ValueTask<bool> DispatchActiveSnapshot(CancellationToken cancellationToken)
+        {
+            return ValueTask.FromResult(false);
+        }
+
         public ValueTask FlushOnShutdown(CancellationToken cancellationToken)
         {
             return ValueTask.CompletedTask;

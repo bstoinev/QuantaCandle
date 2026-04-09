@@ -20,6 +20,11 @@ public interface ITradeCheckpointLifecycle
     ValueTask<bool> CheckpointActive(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Exports and dispatches ad-hoc point-in-time snapshots of the active scratch files.
+    /// </summary>
+    ValueTask<bool> DispatchActiveSnapshot(CancellationToken cancellationToken);
+
+    /// <summary>
     /// Persists the current checkpoint state during graceful shutdown.
     /// </summary>
     ValueTask FlushOnShutdown(CancellationToken cancellationToken);

@@ -10,7 +10,7 @@ namespace QuantaCandle.Infra;
 /// <summary>
 /// Uses the finalized local daily file as the terminal destination for file-based recording.
 /// </summary>
-public sealed class TradeSinkFileSimple : ITradeFinalizedFileDispatcher
+public sealed class TradeSinkFileSimple : ITradeFinalizedFileDispatcher, ITradeSnapshotFileDispatcher
 {
     private readonly TradeSinkFileSimpleOptions _options;
 
@@ -35,6 +35,25 @@ public sealed class TradeSinkFileSimple : ITradeFinalizedFileDispatcher
         if (!File.Exists(finalizedFilePath))
         {
             throw new FileNotFoundException("The finalized local daily trade file does not exist.", finalizedFilePath);
+        }
+
+        var result = ValueTask.CompletedTask;
+        return result;
+    }
+
+    /// <summary>
+    /// Confirms that the supplied ad-hoc scratch snapshot file exists beneath the configured output directory.
+    /// </summary>
+    public ValueTask DispatchAsync(Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(snapshotFilePath);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        _ = TradeLocalDailyFilePath.ValidateSnapshot(_options.OutputDirectory, instrument, snapshotFilePath);
+
+        if (!File.Exists(snapshotFilePath))
+        {
+            throw new FileNotFoundException("The ad-hoc local scratch snapshot file does not exist.", snapshotFilePath);
         }
 
         var result = ValueTask.CompletedTask;

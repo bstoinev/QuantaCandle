@@ -68,9 +68,11 @@ public static class TradeRecorderCompositionRoot
             var fileOptions = tradeSinkRegistration.FileOptions;
             container.RegisterInstance(fileOptions);
             container.RegisterSingleton<IIngestionStateStore>(() => new LocalFileIngestionStateStore(fileOptions.OutputDirectory, container.GetInstance<IClock>()));
-            container.RegisterSingleton<ITradeFinalizedFileDispatcher, TradeSinkFileSimple>();
+            container.RegisterSingleton<TradeSinkFileSimple>();
+            container.RegisterSingleton<ITradeFinalizedFileDispatcher>(() => container.GetInstance<TradeSinkFileSimple>());
+            container.RegisterSingleton<ITradeSnapshotFileDispatcher>(() => container.GetInstance<TradeSinkFileSimple>());
             container.RegisterSingleton<ITradeRecorderStartupTask>(() => new TradeFinalizedFileStartupDispatcher(fileOptions.OutputDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ILogMachina<TradeFinalizedFileStartupDispatcher>>()));
-            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(fileOptions.OutputDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
+            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(container.GetInstance<IClock>(), fileOptions.OutputDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ITradeSnapshotFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
         }
         else if (tradeSinkRegistration.S3Options is not null)
         {
@@ -79,16 +81,20 @@ public static class TradeRecorderCompositionRoot
             container.RegisterSingleton<IAmazonS3>(() => new AmazonS3Client());
             container.RegisterSingleton<IS3ObjectUploader, AwsS3Uploader>();
             container.RegisterSingleton<IIngestionStateStore>(() => new LocalFileIngestionStateStore(s3Options.LocalRootDirectory, container.GetInstance<IClock>()));
-            container.RegisterSingleton<ITradeFinalizedFileDispatcher, TradeSinkS3Simple>();
+            container.RegisterSingleton<TradeSinkS3Simple>();
+            container.RegisterSingleton<ITradeFinalizedFileDispatcher>(() => container.GetInstance<TradeSinkS3Simple>());
+            container.RegisterSingleton<ITradeSnapshotFileDispatcher>(() => container.GetInstance<TradeSinkS3Simple>());
             container.RegisterSingleton<ITradeRecorderStartupTask>(() => new TradeFinalizedFileStartupDispatcher(s3Options.LocalRootDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ILogMachina<TradeFinalizedFileStartupDispatcher>>()));
-            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(s3Options.LocalRootDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
+            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(container.GetInstance<IClock>(), s3Options.LocalRootDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ITradeSnapshotFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
         }
         else
         {
             container.RegisterSingleton<IIngestionStateStore, InMemoryIngestionStateStore>();
             container.RegisterSingleton<ITradeRecorderStartupTask, NullTradeRecorderStartupTask>();
             container.RegisterSingleton<ITradeCheckpointLifecycle, NullTradeCheckpointLifecycle>();
-            container.RegisterSingleton<ITradeFinalizedFileDispatcher, TradeSinkNull>();
+            container.RegisterSingleton<TradeSinkNull>();
+            container.RegisterSingleton<ITradeFinalizedFileDispatcher>(() => container.GetInstance<TradeSinkNull>());
+            container.RegisterSingleton<ITradeSnapshotFileDispatcher>(() => container.GetInstance<TradeSinkNull>());
         }
     }
 }

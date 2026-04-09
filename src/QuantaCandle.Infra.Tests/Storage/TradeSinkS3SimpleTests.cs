@@ -135,6 +135,68 @@ public sealed class TradeSinkS3SimpleTests
     }
 
     [Fact]
+    public async Task SnapshotDispatchUploadsSnapshotArtifactWithoutDeletingIt()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var uploaderMoq = CreateUploaderMoq(out var uploads);
+            var sink = new TradeSinkS3Simple(
+                new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
+                uploaderMoq.Object,
+                CreateLogMoq().Object);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRoot, instrument, new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+
+            await WriteTradeFileAsync(snapshotPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero), 10m)]);
+
+            await ((ITradeSnapshotFileDispatcher)sink).DispatchAsync(instrument, snapshotPath, CancellationToken.None);
+
+            var upload = Assert.Single(uploads);
+            Assert.Equal("my-bucket", upload.BucketName);
+            Assert.Equal("trades/raw/BTC-USDT/2026-03-12.141516789.jsonl", upload.ObjectKey);
+            Assert.Contains("\"tradeId\":\"123\"", upload.Payload, StringComparison.Ordinal);
+            Assert.True(File.Exists(snapshotPath));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task FailedSnapshotDispatchKeepsLocalSnapshotFile()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var uploaderMoq = new Mock<IS3ObjectUploader>();
+            uploaderMoq
+                .Setup(mock => mock.UploadTextAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("S3 unavailable"));
+
+            var sink = new TradeSinkS3Simple(
+                new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
+                uploaderMoq.Object,
+                CreateLogMoq().Object);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRoot, instrument, new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+
+            await WriteTradeFileAsync(snapshotPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero), 10m)]);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => ((ITradeSnapshotFileDispatcher)sink).DispatchAsync(instrument, snapshotPath, CancellationToken.None).AsTask());
+
+            Assert.True(File.Exists(snapshotPath));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
     public void TradeSinkS3SimpleDoesNotAcceptTradeBatchInputs()
     {
         var acceptsTradeBatch = typeof(TradeSinkS3Simple)
@@ -144,6 +206,7 @@ public sealed class TradeSinkS3SimpleTests
 
         Assert.False(acceptsTradeBatch);
         Assert.True(typeof(ITradeFinalizedFileDispatcher).IsAssignableFrom(typeof(TradeSinkS3Simple)));
+        Assert.True(typeof(ITradeSnapshotFileDispatcher).IsAssignableFrom(typeof(TradeSinkS3Simple)));
         Assert.False(typeof(ITradeSinkLifecycle).IsAssignableFrom(typeof(TradeSinkS3Simple)));
     }
 

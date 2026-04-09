@@ -37,17 +37,18 @@ public sealed class TradeIngestWorker(
                 Task completed = await Task.WhenAny(waitToReadTask, tickTask, manualCheckpointTask).ConfigureAwait(false);
                 if (completed == tickTask)
                 {
-                    await TriggerCheckpoint(batch, stoppingToken).ConfigureAwait(false);
+                    await TriggerCheckpoint(batch, CheckpointRequestKind.Checkpoint, stoppingToken).ConfigureAwait(false);
                     tickTask = timer.WaitForNextTickAsync(stoppingToken).AsTask();
                     continue;
                 }
 
                 if (completed == manualCheckpointTask)
                 {
-                    manualCheckpointVersion = await manualCheckpointTask.ConfigureAwait(false);
+                    var checkpointSignalNotification = await manualCheckpointTask.ConfigureAwait(false);
+                    manualCheckpointVersion = checkpointSignalNotification.Version;
                     manualCheckpointTask = checkpointSignal.WaitForNextSignalAsync(manualCheckpointVersion, stoppingToken).AsTask();
                     hasPendingSizeTriggeredCheckpointRequest = false;
-                    await TriggerCheckpoint(batch, stoppingToken).ConfigureAwait(false);
+                    await TriggerCheckpoint(batch, checkpointSignalNotification.RequestKind, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -155,16 +156,21 @@ public sealed class TradeIngestWorker(
     /// <summary>
     /// Flushes the current batch and routes checkpoint work through the existing sink lifecycle path.
     /// </summary>
-    private async Task TriggerCheckpoint(List<TradeInfo> batch, CancellationToken cancellationToken)
+    private async Task TriggerCheckpoint(List<TradeInfo> batch, CheckpointRequestKind requestKind, CancellationToken cancellationToken)
     {
         await FlushBatch(batch, cancellationToken).ConfigureAwait(false);
-        await CheckpointSink(cancellationToken).ConfigureAwait(false);
+        var checkpointCompleted = await CheckpointSink(cancellationToken).ConfigureAwait(false);
+
+        if (checkpointCompleted && requestKind == CheckpointRequestKind.Snapshot)
+        {
+            await tradeCheckpointLifecycle.DispatchActiveSnapshot(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
     /// Runs any due sink checkpoint work without coupling the worker to a specific sink implementation.
     /// </summary>
-    private async ValueTask CheckpointSink(CancellationToken cancellationToken)
+    private async ValueTask<bool> CheckpointSink(CancellationToken cancellationToken)
     {
         var checkpointCompleted = await tradeCheckpointLifecycle.CheckpointActive(cancellationToken).ConfigureAwait(false);
 
@@ -173,6 +179,8 @@ public sealed class TradeIngestWorker(
             var msg = TradePipelineStatsLogFormatter.Format(stats.GetSnapshot());
             log.Info(msg);
         }
+
+        return checkpointCompleted;
     }
 
     /// <summary>

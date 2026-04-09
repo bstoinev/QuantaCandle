@@ -4,6 +4,7 @@ using LogMachina;
 
 using Moq;
 
+using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Infra.Pipeline;
 
@@ -317,19 +318,137 @@ public sealed class TradeScratchCheckpointLifecycleTests
         }
     }
 
+    [Fact]
+    public async Task SnapshotDispatchCopiesPersistedScratchAfterCheckpointWithoutMutatingScratch()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var snapshotDispatcher = new RecordingTradeSnapshotFileDispatcher();
+            var clock = new StubClock(new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+            var (lifecycle, _) = CreateLifecycle(localRoot, tradeSnapshotFileDispatcher: snapshotDispatcher, clock: clock);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
+            ], CancellationToken.None);
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var instrument = Instrument.Parse("BTC-USDT");
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
+            var scratchPayloadBeforeSnapshot = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
+
+            var snapshotDispatched = await lifecycle.DispatchActiveSnapshot(CancellationToken.None);
+
+            var dispatch = Assert.Single(snapshotDispatcher.Dispatches);
+            var snapshotPayload = await File.ReadAllTextAsync(dispatch.SnapshotFilePath, CancellationToken.None);
+            var scratchPayloadAfterSnapshot = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
+
+            Assert.True(snapshotDispatched);
+            Assert.Equal("2026-03-12.141516789.jsonl", Path.GetFileName(dispatch.SnapshotFilePath));
+            Assert.Equal(["1", "2"], ParseTradeIds(snapshotPayload));
+            Assert.Equal(scratchPayloadBeforeSnapshot, snapshotPayload);
+            Assert.Equal(scratchPayloadBeforeSnapshot, scratchPayloadAfterSnapshot);
+            Assert.True(File.Exists(scratchPath));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task SnapshotDispatchIgnoresOtherScratchFilesUnderSameLocalRoot()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var snapshotDispatcher = new RecordingTradeSnapshotFileDispatcher();
+            var clock = new StubClock(new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+            var (lifecycle, _) = CreateLifecycle(localRoot, tradeSnapshotFileDispatcher: snapshotDispatcher, clock: clock);
+            var ignoredScratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("ETH-USDT"));
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ignoredScratchPath)!);
+            await File.WriteAllTextAsync(
+                ignoredScratchPath,
+                TradeJsonlFile.BuildPayload(
+                [
+                    CreateTrade("999", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero), "ETH-USDT"),
+                ]),
+                CancellationToken.None);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
+            ], CancellationToken.None);
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            await lifecycle.DispatchActiveSnapshot(CancellationToken.None);
+
+            var dispatch = Assert.Single(snapshotDispatcher.Dispatches);
+
+            Assert.Equal("BTC-USDT", dispatch.Instrument.ToString());
+            Assert.DoesNotContain("ETH-USDT", dispatch.SnapshotFilePath, StringComparison.Ordinal);
+            Assert.True(File.Exists(ignoredScratchPath));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task SnapshotDispatchDoesNotUseFinalizedDispatcher()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var finalizedDispatcher = new RecordingTradeFinalizedFileDispatcher();
+            var snapshotDispatcher = new RecordingTradeSnapshotFileDispatcher();
+            var clock = new StubClock(new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+            var (lifecycle, _) = CreateLifecycle(localRoot, finalizedDispatcher, snapshotDispatcher, clock);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)),
+            ], CancellationToken.None);
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            await lifecycle.DispatchActiveSnapshot(CancellationToken.None);
+
+            Assert.Empty(finalizedDispatcher.Dispatches);
+            Assert.Single(snapshotDispatcher.Dispatches);
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
     private static (TradeScratchCheckpointLifecycle Lifecycle, InMemoryIngestionStateStore StateStore) CreateLifecycle(
         string localRoot,
-        ITradeFinalizedFileDispatcher? tradeFinalizedFileDispatcher = null)
+        ITradeFinalizedFileDispatcher? tradeFinalizedFileDispatcher = null,
+        ITradeSnapshotFileDispatcher? tradeSnapshotFileDispatcher = null,
+        IClock? clock = null)
     {
         var logMoq = new Mock<ILogMachina<TradeScratchCheckpointLifecycle>>();
         var stateStore = new InMemoryIngestionStateStore();
-        var result = new TradeScratchCheckpointLifecycle(localRoot, tradeFinalizedFileDispatcher ?? new TradeSinkNull(), stateStore, logMoq.Object);
+        var result = new TradeScratchCheckpointLifecycle(clock ?? new StubClock(new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)), localRoot, tradeFinalizedFileDispatcher ?? new TradeSinkNull(), tradeSnapshotFileDispatcher ?? new TradeSinkNull(), stateStore, logMoq.Object);
         return (result, stateStore);
     }
 
-    private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp)
+    private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp, string instrumentText = "BTC-USDT")
     {
-        var key = new TradeKey(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), tradeId);
+        var key = new TradeKey(new ExchangeId("Stub"), Instrument.Parse(instrumentText), tradeId);
         var result = new TradeInfo(key, timestamp, 1m, 1m);
         return result;
     }
@@ -380,4 +499,22 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     private sealed record DispatchCall(Instrument Instrument, DateOnly UtcDate, string FinalizedFilePath, bool FileExistedAtDispatch);
+
+    private sealed class RecordingTradeSnapshotFileDispatcher : ITradeSnapshotFileDispatcher
+    {
+        public List<SnapshotDispatchCall> Dispatches { get; } = [];
+
+        public ValueTask DispatchAsync(Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
+        {
+            Dispatches.Add(new SnapshotDispatchCall(instrument, snapshotFilePath, File.Exists(snapshotFilePath)));
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class StubClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
+    }
+
+    private sealed record SnapshotDispatchCall(Instrument Instrument, string SnapshotFilePath, bool FileExistedAtDispatch);
 }

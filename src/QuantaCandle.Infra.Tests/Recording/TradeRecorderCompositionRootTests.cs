@@ -30,10 +30,12 @@ public sealed class TradeRecorderCompositionRootTests
         var checkpointLifecycle = container.GetInstance<ITradeCheckpointLifecycle>();
         var startupTask = container.GetInstance<ITradeRecorderStartupTask>();
         var sink = container.GetInstance<ITradeFinalizedFileDispatcher>();
+        var snapshotDispatcher = container.GetInstance<ITradeSnapshotFileDispatcher>();
 
         Assert.IsType<TradeScratchCheckpointLifecycle>(checkpointLifecycle);
         Assert.IsType<TradeFinalizedFileStartupDispatcher>(startupTask);
         Assert.IsType<TradeSinkFileSimple>(sink);
+        Assert.IsType<TradeSinkFileSimple>(snapshotDispatcher);
     }
 
     [Fact]
@@ -54,10 +56,12 @@ public sealed class TradeRecorderCompositionRootTests
         var checkpointLifecycle = container.GetInstance<ITradeCheckpointLifecycle>();
         var startupTask = container.GetInstance<ITradeRecorderStartupTask>();
         var sink = container.GetInstance<ITradeFinalizedFileDispatcher>();
+        var snapshotDispatcher = container.GetInstance<ITradeSnapshotFileDispatcher>();
 
         Assert.IsType<NullTradeCheckpointLifecycle>(checkpointLifecycle);
         Assert.IsType<NullTradeRecorderStartupTask>(startupTask);
         Assert.IsType<TradeSinkNull>(sink);
+        Assert.IsType<TradeSinkNull>(snapshotDispatcher);
     }
 
     [Fact]
@@ -87,12 +91,14 @@ public sealed class TradeRecorderCompositionRootTests
             var startupTask = container.GetInstance<ITradeRecorderStartupTask>();
             var uploader = container.GetInstance<IS3ObjectUploader>();
             var sink = container.GetInstance<ITradeFinalizedFileDispatcher>();
+            var snapshotDispatcher = container.GetInstance<ITradeSnapshotFileDispatcher>();
 
             Assert.IsType<LocalFileIngestionStateStore>(ingestionStateStore);
             Assert.IsType<TradeScratchCheckpointLifecycle>(checkpointLifecycle);
             Assert.IsType<TradeFinalizedFileStartupDispatcher>(startupTask);
             Assert.IsType<AwsS3Uploader>(uploader);
             Assert.IsType<TradeSinkS3Simple>(sink);
+            Assert.IsType<TradeSinkS3Simple>(snapshotDispatcher);
         }
         finally
         {

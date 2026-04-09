@@ -83,7 +83,9 @@ public sealed class ExecutableFlowValidationTests
             .Returns(new DateTimeOffset(2026, 3, 11, 23, 59, 59, 500, TimeSpan.Zero));
         var checkpointLifecycleLogMoq = new Mock<ILogMachina<TradeScratchCheckpointLifecycle>>();
         var checkpointLifecycle = new TradeScratchCheckpointLifecycle(
+            clockMoq.Object,
             tradeDirectory,
+            sink,
             sink,
             stateStore,
             checkpointLifecycleLogMoq.Object);

@@ -2,6 +2,7 @@ using System.Globalization;
 
 using LogMachina;
 
+using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 
 namespace QuantaCandle.Infra.Pipeline;
@@ -10,14 +11,17 @@ namespace QuantaCandle.Infra.Pipeline;
 /// Persists recorder-owned scratch checkpoints while retaining the latest trade only in memory.
 /// </summary>
 public sealed class TradeScratchCheckpointLifecycle(
+    IClock clock,
     string localRootDirectory,
     ITradeFinalizedFileDispatcher tradeFinalizedFileDispatcher,
+    ITradeSnapshotFileDispatcher tradeSnapshotFileDispatcher,
     IIngestionStateStore ingestionStateStore,
     ILogMachina<TradeScratchCheckpointLifecycle> log) : ITradeCheckpointLifecycle
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<(ExchangeId Exchange, Instrument Symbol), List<TradeInfo>> _pendingTradesByInstrument = [];
     private readonly Dictionary<(ExchangeId Exchange, Instrument Symbol), InstrumentScratchState> _scratchStatesByInstrument = [];
+    private IReadOnlyList<ActiveScratchSnapshotContext> _lastCheckpointSnapshotContexts = [];
 
     /// <summary>
     /// Tracks trades that should participate in checkpoints.
@@ -53,6 +57,7 @@ public sealed class TradeScratchCheckpointLifecycle(
     public async ValueTask<bool> CheckpointActive(CancellationToken cancellationToken)
     {
         Dictionary<(ExchangeId Exchange, Instrument Symbol), TradeCheckpointSlice> checkpointSlices;
+        var checkpointSnapshotContexts = new List<ActiveScratchSnapshotContext>();
 
         lock (_gate)
         {
@@ -68,21 +73,68 @@ public sealed class TradeScratchCheckpointLifecycle(
                 continue;
             }
 
-            var persistenceState = await PersistScratchStateAsync(pair.Key.Exchange, pair.Key.Symbol, pair.Value.TradesToPersist, cancellationToken).ConfigureAwait(false);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRootDirectory, pair.Key.Symbol);
+            var persistenceState = await PersistScratchStateAsync(pair.Key.Exchange, pair.Key.Symbol, scratchPath, pair.Value.TradesToPersist, cancellationToken).ConfigureAwait(false);
             await RecordCurrentBatchGapsAsync(pair.Key.Exchange, pair.Key.Symbol, pair.Value.TradesToPersist, cancellationToken).ConfigureAwait(false);
 
             lock (_gate)
             {
                 _scratchStatesByInstrument[pair.Key] = persistenceState;
             }
+
+            if (File.Exists(scratchPath))
+            {
+                checkpointSnapshotContexts.Add(new ActiveScratchSnapshotContext(pair.Key.Symbol, scratchPath));
+            }
         }
 
         lock (_gate)
         {
             ApplyCheckpointSlices(checkpointSlices);
+            _lastCheckpointSnapshotContexts = checkpointSnapshotContexts;
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Exports point-in-time copies of the active persisted scratch files and dispatches them through the dedicated snapshot path.
+    /// </summary>
+    public async ValueTask<bool> DispatchActiveSnapshot(CancellationToken cancellationToken)
+    {
+        var snapshotUtcTimestamp = clock.UtcNow;
+        List<ActiveScratchSnapshotContext> snapshotContexts;
+
+        lock (_gate)
+        {
+            snapshotContexts = [.. _lastCheckpointSnapshotContexts];
+        }
+
+        var snapshotPaths = new List<(Instrument Instrument, string SnapshotPath)>(snapshotContexts.Count);
+
+        foreach (var snapshotContext in snapshotContexts)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRootDirectory, snapshotContext.Instrument, snapshotUtcTimestamp);
+            var snapshotDirectory = Path.GetDirectoryName(snapshotPath);
+            if (!string.IsNullOrWhiteSpace(snapshotDirectory))
+            {
+                Directory.CreateDirectory(snapshotDirectory);
+            }
+
+            log.Info($"Trade scratch snapshot export: instrument={snapshotContext.Instrument}, from={snapshotContext.ScratchPath}, to={snapshotPath}.");
+            File.Copy(snapshotContext.ScratchPath, snapshotPath, overwrite: false);
+            snapshotPaths.Add((snapshotContext.Instrument, snapshotPath));
+        }
+
+        foreach (var snapshotPath in snapshotPaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await tradeSnapshotFileDispatcher.DispatchAsync(snapshotPath.Instrument, snapshotPath.SnapshotPath, cancellationToken).ConfigureAwait(false);
+        }
+
+        return snapshotPaths.Count > 0;
     }
 
     /// <summary>
@@ -129,11 +181,11 @@ public sealed class TradeScratchCheckpointLifecycle(
     private async Task<InstrumentScratchState> PersistScratchStateAsync(
         ExchangeId exchange,
         Instrument instrument,
+        string scratchPath,
         IReadOnlyList<TradeInfo> tradesToPersist,
         CancellationToken cancellationToken)
     {
         var result = InstrumentScratchState.Empty;
-        var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRootDirectory, instrument);
         var checkpointState = await GetScratchStateAsync(exchange, instrument, scratchPath, cancellationToken).ConfigureAwait(false);
         var currentScratchUtcDate = checkpointState.ActiveScratchUtcDate ?? DateOnly.FromDateTime(tradesToPersist[0].Timestamp.UtcDateTime);
         var remainingTrades = tradesToPersist.ToList();
@@ -364,5 +416,15 @@ public sealed class TradeScratchCheckpointLifecycle(
         /// Gets the trades that should be appended to the instrument scratch file.
         /// </summary>
         public IReadOnlyList<TradeInfo> TradesToPersist { get; } = tradesToPersist;
+    }
+
+    /// <summary>
+    /// Describes one persisted active scratch file that can be exported as a point-in-time snapshot.
+    /// </summary>
+    private sealed class ActiveScratchSnapshotContext(Instrument instrument, string scratchPath)
+    {
+        public Instrument Instrument { get; } = instrument;
+
+        public string ScratchPath { get; } = scratchPath;
     }
 }

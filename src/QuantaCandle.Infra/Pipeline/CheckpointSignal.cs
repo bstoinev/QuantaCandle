@@ -6,8 +6,9 @@ namespace QuantaCandle.Infra.Pipeline;
 public sealed class CheckpointSignal : ICheckpointSignal
 {
     private readonly Lock _gate = new();
-    private TaskCompletionSource<long> _nextSignal = CreateSignalSource();
+    private TaskCompletionSource<CheckpointSignalNotification> _nextSignal = CreateSignalSource();
     private long _currentVersion;
+    private CheckpointRequestKind _currentRequestKind = CheckpointRequestKind.Checkpoint;
 
     /// <summary>
     /// Gets the latest published checkpoint signal version.
@@ -17,27 +18,29 @@ public sealed class CheckpointSignal : ICheckpointSignal
     /// <summary>
     /// Signals all current listeners that a checkpoint should run.
     /// </summary>
-    public void Signal()
+    public void Signal(CheckpointRequestKind requestKind = CheckpointRequestKind.Checkpoint)
     {
-        TaskCompletionSource<long> nextSignal;
-        long currentVersion;
+        TaskCompletionSource<CheckpointSignalNotification> nextSignal;
+        CheckpointSignalNotification notification;
 
         lock (_gate)
         {
-            currentVersion = Interlocked.Increment(ref _currentVersion);
+            var currentVersion = Interlocked.Increment(ref _currentVersion);
+            _currentRequestKind = requestKind;
+            notification = new CheckpointSignalNotification(currentVersion, requestKind);
             nextSignal = _nextSignal;
             _nextSignal = CreateSignalSource();
         }
 
-        nextSignal.TrySetResult(currentVersion);
+        nextSignal.TrySetResult(notification);
     }
 
     /// <summary>
     /// Waits until a newer checkpoint signal is published.
     /// </summary>
-    public ValueTask<long> WaitForNextSignalAsync(long observedVersion, CancellationToken cancellationToken)
+    public ValueTask<CheckpointSignalNotification> WaitForNextSignalAsync(long observedVersion, CancellationToken cancellationToken)
     {
-        Task<long> result;
+        Task<CheckpointSignalNotification> result;
 
         lock (_gate)
         {
@@ -47,16 +50,16 @@ public sealed class CheckpointSignal : ICheckpointSignal
             }
             else
             {
-                result = Task.FromResult(_currentVersion);
+                result = Task.FromResult(new CheckpointSignalNotification(_currentVersion, _currentRequestKind));
             }
         }
 
-        return new ValueTask<long>(result);
+        return new ValueTask<CheckpointSignalNotification>(result);
     }
 
-    private static TaskCompletionSource<long> CreateSignalSource()
+    private static TaskCompletionSource<CheckpointSignalNotification> CreateSignalSource()
     {
-        var result = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var result = new TaskCompletionSource<CheckpointSignalNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
         return result;
     }
 }

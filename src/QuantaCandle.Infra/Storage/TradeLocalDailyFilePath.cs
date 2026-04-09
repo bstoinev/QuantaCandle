@@ -37,6 +37,18 @@ public static class TradeLocalDailyFilePath
     }
 
     /// <summary>
+    /// Builds the local JSONL path for one ad-hoc UTC timestamped scratch snapshot.
+    /// </summary>
+    public static string BuildSnapshot(string localRootDirectory, Instrument instrument, DateTimeOffset utcTimestamp)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(localRootDirectory);
+
+        var snapshotFileName = $"{utcTimestamp.UtcDateTime:yyyy-MM-dd.HHmmssfff}.jsonl";
+        var result = Path.Combine(localRootDirectory, instrument.ToString(), snapshotFileName);
+        return result;
+    }
+
+    /// <summary>
     /// Validates that the supplied path matches the finalized local JSONL path for the specified instrument UTC day.
     /// </summary>
     public static string ValidateFinalized(string localRootDirectory, Instrument instrument, DateOnly utcDate, string finalizedFilePath)
@@ -52,6 +64,37 @@ public static class TradeLocalDailyFilePath
 
         var result = expectedPath;
         return result;
+    }
+
+    /// <summary>
+    /// Validates that the supplied path matches the ad-hoc scratch snapshot layout for the specified instrument.
+    /// </summary>
+    public static string ValidateSnapshot(string localRootDirectory, Instrument instrument, string snapshotFilePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(localRootDirectory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(snapshotFilePath);
+
+        var expectedDirectory = Path.Combine(localRootDirectory, instrument.ToString());
+        var actualDirectory = Path.GetDirectoryName(snapshotFilePath);
+        if (!string.Equals(expectedDirectory, actualDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Snapshot file path must match the configured output directory. Expected directory '{expectedDirectory}', actual '{actualDirectory}'.");
+        }
+
+        var snapshotFileName = Path.GetFileNameWithoutExtension(snapshotFilePath);
+        var isSnapshotFileName = DateTime.TryParseExact(
+            snapshotFileName,
+            "yyyy-MM-dd.HHmmssfff",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out _);
+
+        if (!isSnapshotFileName)
+        {
+            throw new InvalidOperationException($"Snapshot file path must use the UTC timestamp snapshot naming convention. Actual '{snapshotFilePath}'.");
+        }
+
+        return snapshotFilePath;
     }
 
     /// <summary>

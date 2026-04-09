@@ -24,6 +24,14 @@ public sealed class NullTradeCheckpointLifecycle : ITradeCheckpointLifecycle
     }
 
     /// <summary>
+    /// Completes without exporting any snapshot state.
+    /// </summary>
+    public ValueTask<bool> DispatchActiveSnapshot(CancellationToken cancellationToken)
+    {
+        return ValueTask.FromResult(false);
+    }
+
+    /// <summary>
     /// Completes without persisting any checkpoint state.
     /// </summary>
     public ValueTask FlushOnShutdown(CancellationToken cancellationToken)

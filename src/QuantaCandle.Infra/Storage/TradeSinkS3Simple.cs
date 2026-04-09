@@ -8,7 +8,7 @@ namespace QuantaCandle.Infra;
 /// <summary>
 /// Uploads finalized local UTC day trade files to S3.
 /// </summary>
-public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher
+public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher, ITradeSnapshotFileDispatcher
 {
     private readonly ILogMachina<TradeSinkS3Simple> _log;
     private readonly TradeSinkS3SimpleOptions _options;
@@ -57,6 +57,34 @@ public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher
         catch (Exception ex)
         {
             _log.Warn($"Trade S3 upload failure: bucket={_options.BucketName}, objectKey={objectKey}, path={finalizedFilePath}.");
+            _log.Error(ex);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Uploads the supplied ad-hoc scratch snapshot file to S3 without deleting the local artifact.
+    /// </summary>
+    public async ValueTask DispatchAsync(Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(snapshotFilePath);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = TradeLocalDailyFilePath.ValidateSnapshot(_options.LocalRootDirectory, instrument, snapshotFilePath);
+
+        var payload = await File.ReadAllTextAsync(snapshotFilePath, cancellationToken).ConfigureAwait(false);
+        var snapshotFileName = Path.GetFileName(snapshotFilePath);
+        var objectKey = TradeSinkS3SnapshotObjectKey.Build(_options.Prefix, instrument.ToString(), snapshotFileName);
+        _log.Info($"Trade S3 snapshot upload start: bucket={_options.BucketName}, objectKey={objectKey}, path={snapshotFilePath}.");
+
+        try
+        {
+            await _uploader.UploadTextAsync(_options.BucketName, objectKey, payload, cancellationToken).ConfigureAwait(false);
+            _log.Info($"Trade S3 snapshot upload success: bucket={_options.BucketName}, objectKey={objectKey}.");
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"Trade S3 snapshot upload failure: bucket={_options.BucketName}, objectKey={objectKey}, path={snapshotFilePath}.");
             _log.Error(ex);
             throw;
         }

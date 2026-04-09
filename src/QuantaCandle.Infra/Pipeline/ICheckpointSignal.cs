@@ -13,10 +13,10 @@ public interface ICheckpointSignal
     /// <summary>
     /// Signals that all listeners should trigger a checkpoint as soon as possible.
     /// </summary>
-    void Signal();
+    void Signal(CheckpointRequestKind requestKind = CheckpointRequestKind.Checkpoint);
 
     /// <summary>
     /// Waits until a newer checkpoint signal than <paramref name="observedVersion"/> is published.
     /// </summary>
-    ValueTask<long> WaitForNextSignalAsync(long observedVersion, CancellationToken cancellationToken);
+    ValueTask<CheckpointSignalNotification> WaitForNextSignalAsync(long observedVersion, CancellationToken cancellationToken);
 }

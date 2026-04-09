@@ -1,7 +1,7 @@
 namespace QuantaCandle.Infra.Pipeline;
 
 /// <summary>
-/// Watches console key input and requests a manual checkpoint when Ctrl+S is pressed.
+/// Watches console key input and requests manual checkpoint actions from recorder hotkeys.
 /// </summary>
 public sealed class ConsoleCheckpointHotkeyListener(
     IConsoleKeyReader consoleKeyReader,
@@ -26,9 +26,9 @@ public sealed class ConsoleCheckpointHotkeyListener(
                 if (consoleKeyReader.KeyAvailable)
                 {
                     var key = consoleKeyReader.ReadKey(intercept: true);
-                    if (IsManualCheckpointHotkey(key))
+                    if (TryGetCheckpointRequestKind(key, out var requestKind))
                     {
-                        checkpointSignal.Signal();
+                        checkpointSignal.Signal(requestKind);
                     }
                 }
                 else
@@ -46,7 +46,19 @@ public sealed class ConsoleCheckpointHotkeyListener(
     }
 
     /// <summary>
-    /// Determines whether the supplied key press should trigger a manual checkpoint.
+    /// Determines whether the supplied key press should trigger a manual checkpoint action.
     /// </summary>
-    public static bool IsManualCheckpointHotkey(ConsoleKeyInfo key) => key.Key == ConsoleKey.S && key.Modifiers.HasFlag(ConsoleModifiers.Control);
+    public static bool TryGetCheckpointRequestKind(ConsoleKeyInfo key, out CheckpointRequestKind requestKind)
+    {
+        var isControlPressed = key.Modifiers.HasFlag(ConsoleModifiers.Control);
+        var hasNoAdditionalModifiers = !key.Modifiers.HasFlag(ConsoleModifiers.Shift) && !key.Modifiers.HasFlag(ConsoleModifiers.Alt);
+        var canHandle = isControlPressed && hasNoAdditionalModifiers && key.Key is ConsoleKey.S or ConsoleKey.P;
+
+        requestKind = key.Key == ConsoleKey.P
+            ? CheckpointRequestKind.Snapshot
+            : CheckpointRequestKind.Checkpoint;
+
+        var result = canHandle;
+        return result;
+    }
 }

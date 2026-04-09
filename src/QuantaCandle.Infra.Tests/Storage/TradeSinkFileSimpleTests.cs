@@ -87,6 +87,35 @@ public sealed class TradeSinkFileSimpleTests
     }
 
     [Fact]
+    public async Task SnapshotDispatchAcceptsTimestampedSnapshotPathWithoutDeletingIt()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            var sink = new TradeSinkFileSimple(new TradeSinkFileSimpleOptions(root));
+            var instrument = Instrument.Parse("BTC-USDT");
+            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(root, instrument, new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+            var payload = TradeJsonlFile.BuildPayload([CreateTrade("123", new DateOnly(2026, 3, 12))]);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(snapshotPath)!);
+            await File.WriteAllTextAsync(snapshotPath, payload, CancellationToken.None);
+
+            await ((ITradeSnapshotFileDispatcher)sink).DispatchAsync(instrument, snapshotPath, CancellationToken.None);
+
+            Assert.True(File.Exists(snapshotPath));
+            Assert.Equal(payload, await File.ReadAllTextAsync(snapshotPath, CancellationToken.None));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void TradeSinkFileSimpleDoesNotAcceptTradeBatchInputs()
     {
         var acceptsTradeBatch = typeof(TradeSinkFileSimple)
@@ -96,6 +125,7 @@ public sealed class TradeSinkFileSimpleTests
 
         Assert.False(acceptsTradeBatch);
         Assert.True(typeof(ITradeFinalizedFileDispatcher).IsAssignableFrom(typeof(TradeSinkFileSimple)));
+        Assert.True(typeof(ITradeSnapshotFileDispatcher).IsAssignableFrom(typeof(TradeSinkFileSimple)));
     }
 
     private static TradeInfo CreateTrade(string tradeId, DateOnly utcDate)
