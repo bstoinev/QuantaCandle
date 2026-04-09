@@ -49,6 +49,7 @@ public static class TradeRecorderCommand
         }
 
         var duration = GetOptionalDurationOption(options, "duration");
+        var cacheSize = GetPositiveIntOption(options, "cacheSize", 1024);
         var capacity = GetIntOption(options, "capacity", 10_000);
         var batchSize = GetIntOption(options, "batchSize", 500);
         var flushInterval = GetDurationOption(options, "flushInterval", TimeSpan.FromSeconds(1));
@@ -69,6 +70,7 @@ public static class TradeRecorderCommand
 
         var runOptions = new TradeRecorderRunOptions(
             duration,
+            cacheSize,
             collectorOptions,
             retryOptions,
             CreateTradeSourceRegistration(source, binanceWsBase, tradesPerSecond),
@@ -87,8 +89,8 @@ public static class TradeRecorderCommand
         writer.WriteLine("QuantaCandle.TradeRecorder");
         writer.WriteLine();
         writer.WriteLine("Usage:");
-        writer.WriteLine("  --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--sink file|s3|null] [--outDir trades-out]");
-        writer.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--sink file|s3|null] [--outDir trades-out]");
+        writer.WriteLine("  --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--cacheSize 1024] [--sink file|s3|null] [--outDir trades-out]");
+        writer.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--cacheSize 1024] [--sink file|s3|null] [--outDir trades-out]");
         writer.WriteLine("    Omit --duration to keep recording until the host or process is stopped.");
         writer.WriteLine("    Default sink: file. Use --sink null to disable durable trade output intentionally.");
         writer.WriteLine("    S3 sink options: --s3Bucket my-bucket [--s3Prefix trades/raw] (env: QUANTA_CANDLE_S3_BUCKET, QUANTA_CANDLE_S3_PREFIX)");
@@ -218,6 +220,28 @@ public static class TradeRecorderCommand
 
         if (options.TryGetValue(name, out var value) && int.TryParse(value, out var parsed))
         {
+            result = parsed;
+        }
+
+        return result;
+    }
+
+    private static int GetPositiveIntOption(IReadOnlyDictionary<string, string> options, string name, int defaultValue)
+    {
+        var result = defaultValue;
+
+        if (options.TryGetValue(name, out var value))
+        {
+            if (!int.TryParse(value, out var parsed))
+            {
+                throw new ArgumentException($"The --{name} option must be a positive integer.");
+            }
+
+            if (parsed <= 0)
+            {
+                throw new ArgumentException($"The --{name} option must be greater than zero.");
+            }
+
             result = parsed;
         }
 

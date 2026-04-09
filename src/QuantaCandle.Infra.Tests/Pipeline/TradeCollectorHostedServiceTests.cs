@@ -46,7 +46,7 @@ public sealed class TradeCollectorHostedServiceTests
         var deduplicator = new InMemoryTradeDeduplicator(options);
         var stats = new TradePipelineStats();
         var logMoq = new Mock<ILogMachina<TradeIngestWorker>>();
-        var result = new TradeIngestWorker(stateStore, checkpointSignal, checkpointLifecycle, deduplicator, stats, logMoq.Object);
+        var result = new TradeIngestWorker(stateStore, checkpointSignal, checkpointLifecycle, new TradeCheckpointTriggerOptions(1024), deduplicator, stats, logMoq.Object);
         return result;
     }
 

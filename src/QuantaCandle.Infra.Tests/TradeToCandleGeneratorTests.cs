@@ -11,7 +11,7 @@ namespace QuantaCandle.Infra.Tests;
 public sealed class TradeToCandleGeneratorTests
 {
     [Fact]
-    public async Task Defaults_to_csv_output_when_format_is_omitted()
+    public async Task DefaultsToCsvOutputIfFormatIsOmitted()
     {
         var root = CreateTempRoot();
 
@@ -59,7 +59,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Supports_explicit_csv_output()
+    public async Task SupportsEplicitCsvOutput()
     {
         var root = CreateTempRoot();
 
@@ -83,7 +83,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Supports_explicit_jsonl_output()
+    public async Task SupportsExplicitJsonlOutput()
     {
         var root = CreateTempRoot();
 
@@ -119,7 +119,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Emits_gap_candles_as_empty_ohlc_in_csv()
+    public async Task EmitsGapCandlesAsEmptyOhlcInCsv()
     {
         var root = CreateTempRoot();
 
@@ -156,7 +156,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Produces_identical_output_for_shuffled_input_order()
+    public async Task ProducesIdenticalOutputForShuffledInputOrder()
     {
         var root = CreateTempRoot();
 
@@ -192,7 +192,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Drops_duplicate_trades_by_trade_key()
+    public async Task DropsDuplicateTradesByTradeKey()
     {
         var root = CreateTempRoot();
 
@@ -224,7 +224,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Scope_selection_uses_only_requested_instrument_files()
+    public async Task ScopeSelectionUsesOnlyRequestedInstrumentFiles()
     {
         var root = CreateTempRoot();
 
@@ -251,7 +251,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Scope_selection_uses_only_requested_dates()
+    public async Task ScopeSelectionUsesOnlyRequestedDates()
     {
         var root = CreateTempRoot();
 
@@ -289,7 +289,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Scoped_generation_does_not_delete_unrelated_existing_output()
+    public async Task ScopedGenerationDoesNotDeleteUnrelatedExistingOutput()
     {
         var root = CreateTempRoot();
 
@@ -321,7 +321,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Uses_requested_exchange_folder()
+    public async Task UsesRequestedExchangeFolder()
     {
         var root = CreateTempRoot();
 
@@ -349,7 +349,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task Does_not_read_matching_files_from_different_exchange_folder()
+    public async Task DoesNotReadMatchingFilesFromDifferentExchangeFolder()
     {
         var root = CreateTempRoot();
 

@@ -19,6 +19,7 @@ public sealed class TradeRecorderCommandTests
         ]);
 
         Assert.Null(options.Duration);
+        Assert.Equal(1024, options.CacheSize);
         Assert.Equal("trades-out", options.SinkRegistration.FileOptions!.OutputDirectory);
         Assert.Null(options.SourceRegistration.StubOptions);
         Assert.NotNull(options.SourceRegistration.BinanceOptions);
@@ -75,6 +76,57 @@ public sealed class TradeRecorderCommandTests
         ]);
 
         Assert.Equal(TimeSpan.FromHours(1), options.CollectorOptions.CheckpointInterval);
+    }
+
+    [Fact]
+    public void DefaultsCacheSizeToOneThousandTwentyFour()
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+        ]);
+
+        Assert.Equal(1024, options.CacheSize);
+    }
+
+    [Fact]
+    public void ParsesCacheSizeOption()
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+            "--cacheSize", "2048",
+        ]);
+
+        Assert.Equal(2048, options.CacheSize);
+    }
+
+    [Fact]
+    public void RejectsZeroCacheSize()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+            "--cacheSize", "0",
+        ]));
+
+        Assert.Contains("The --cacheSize option must be greater than zero.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RejectsNegativeCacheSize()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(
+        [
+            "--source", "stub",
+            "--instrument", "BTCUSDT",
+            "--cacheSize", "-1",
+        ]));
+
+        Assert.Contains("The --cacheSize option must be greater than zero.", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -136,6 +188,7 @@ public sealed class TradeRecorderCommandTests
 
         Assert.Contains("[--duration 10m]", help, StringComparison.Ordinal);
         Assert.Contains("[--checkpointInterval 1h]", help, StringComparison.Ordinal);
+        Assert.Contains("[--cacheSize 1024]", help, StringComparison.Ordinal);
         Assert.Contains("[--sink file|s3|null]", help, StringComparison.Ordinal);
         Assert.Contains("Default sink: file. Use --sink null to disable durable trade output intentionally.", help, StringComparison.Ordinal);
         Assert.Contains("Omit --duration to keep recording until the host or process is stopped.", help, StringComparison.Ordinal);

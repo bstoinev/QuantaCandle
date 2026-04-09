@@ -88,7 +88,7 @@ public sealed class ExecutableFlowValidationTests
             stateStore,
             checkpointLifecycleLogMoq.Object);
 
-        var worker = new TradeIngestWorker(stateStore, new CheckpointSignal(), checkpointLifecycle, deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(stateStore, new CheckpointSignal(), checkpointLifecycle, new TradeCheckpointTriggerOptions(1024), deduplicator, stats, logMoq.Object);
         var source = new TradeSourceStub(new TradeSourceStubOptions(new ExchangeId("Stub"), 20, 50_000m, 0.01m, 0.001m), clockMoq.Object);
 
         using var sourceCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1_500));

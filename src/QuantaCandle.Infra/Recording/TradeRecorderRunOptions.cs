@@ -7,6 +7,7 @@ namespace QuantaCandle.Infra;
 /// </summary>
 public sealed record TradeRecorderRunOptions(
     TimeSpan? Duration,
+    int CacheSize,
     CollectorOptions CollectorOptions,
     RetryOptions RetryOptions,
     TradeRecorderSourceRegistration SourceRegistration,

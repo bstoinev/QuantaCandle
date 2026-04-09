@@ -194,9 +194,10 @@ public sealed class TradeToCandleGenerator
         }
 
         var result = source.Trim().ToLowerInvariant();
-        if (!result.Equals("binance", StringComparison.Ordinal))
+        if (result.Contains(Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || result.Contains(Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
         {
-            throw new NotSupportedException("Only source 'binance' is currently supported.");
+            throw new ArgumentException("Source must be a single directory name.", nameof(source));
         }
 
         return result;

@@ -11,6 +11,7 @@ public sealed class TradeIngestWorker(
     IIngestionStateStore ingestionStateStore,
     ICheckpointSignal checkpointSignal,
     ITradeCheckpointLifecycle tradeCheckpointLifecycle,
+    TradeCheckpointTriggerOptions checkpointTriggerOptions,
     ITradeDeduplicator deduplicator,
     TradePipelineStats stats,
     ILogMachina<TradeIngestWorker> log)
@@ -25,6 +26,7 @@ public sealed class TradeIngestWorker(
         var manualCheckpointVersion = checkpointSignal.CurrentVersion;
         var manualCheckpointTask = checkpointSignal.WaitForNextSignalAsync(manualCheckpointVersion, stoppingToken).AsTask();
         var tickTask = timer.WaitForNextTickAsync(stoppingToken).AsTask();
+        var hasPendingSizeTriggeredCheckpointRequest = false;
 
         try
         {
@@ -44,6 +46,7 @@ public sealed class TradeIngestWorker(
                 {
                     manualCheckpointVersion = await manualCheckpointTask.ConfigureAwait(false);
                     manualCheckpointTask = checkpointSignal.WaitForNextSignalAsync(manualCheckpointVersion, stoppingToken).AsTask();
+                    hasPendingSizeTriggeredCheckpointRequest = false;
                     await TriggerCheckpoint(batch, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
@@ -63,7 +66,13 @@ public sealed class TradeIngestWorker(
                             batch.Add(trade);
                             if (batch.Count >= options.BatchSize)
                             {
-                                await FlushBatch(batch, stoppingToken).ConfigureAwait(false);
+                                var trackedTradeCount = await FlushBatch(batch, stoppingToken).ConfigureAwait(false);
+                                if (RequestCheckpointWhenCacheThresholdIsReached(trackedTradeCount, checkpointTriggerOptions.CacheSize, hasPendingSizeTriggeredCheckpointRequest))
+                                {
+                                    hasPendingSizeTriggeredCheckpointRequest = true;
+                                    checkpointSignal.Signal();
+                                    break;
+                                }
                             }
                         }
                         else
@@ -115,8 +124,10 @@ public sealed class TradeIngestWorker(
         }
     }
 
-    private async Task FlushBatch(List<TradeInfo> batch, CancellationToken cancellationToken)
+    private async Task<int> FlushBatch(List<TradeInfo> batch, CancellationToken cancellationToken)
     {
+        var result = 0;
+
         if (batch.Count != 0)
         {
             var snapshot = batch.ToArray();
@@ -135,8 +146,10 @@ public sealed class TradeIngestWorker(
                 await ingestionStateStore.SetWatermarkAsync(kvp.Key.Exchange, kvp.Key.Symbol, kvp.Value, cancellationToken).ConfigureAwait(false);
             }
 
-            await tradeCheckpointLifecycle.TrackAppendedTrades(snapshot, cancellationToken).ConfigureAwait(false);
+            result = await tradeCheckpointLifecycle.TrackAppendedTrades(snapshot, cancellationToken).ConfigureAwait(false);
         }
+
+        return result;
     }
 
     /// <summary>
@@ -168,6 +181,18 @@ public sealed class TradeIngestWorker(
     private ValueTask FlushSinkOnShutdown(CancellationToken cancellationToken)
     {
         var result = tradeCheckpointLifecycle.FlushOnShutdown(cancellationToken);
+        return result;
+    }
+
+    /// <summary>
+    /// Requests a checkpoint when the in-memory cache has reached the configured threshold.
+    /// </summary>
+    private static bool RequestCheckpointWhenCacheThresholdIsReached(
+        int trackedTradeCount,
+        int cacheSize,
+        bool hasPendingSizeTriggeredCheckpointRequest)
+    {
+        var result = trackedTradeCount >= cacheSize && !hasPendingSizeTriggeredCheckpointRequest;
         return result;
     }
 }

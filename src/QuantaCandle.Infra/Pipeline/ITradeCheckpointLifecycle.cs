@@ -9,8 +9,9 @@ public interface ITradeCheckpointLifecycle
 {
     /// <summary>
     /// Tracks trades that were accepted by the ingest pipeline and are eligible for checkpointing.
+    /// Returns the current total count of trades retained in the recorder-owned in-memory checkpoint cache.
     /// </summary>
-    ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken);
+    ValueTask<int> TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken);
 
     /// <summary>
     /// Persists the current checkpoint state.

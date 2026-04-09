@@ -22,9 +22,10 @@ public sealed class TradeScratchCheckpointLifecycle(
     /// <summary>
     /// Tracks trades that should participate in checkpoints.
     /// </summary>
-    public ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+    public ValueTask<int> TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var result = 0;
 
         lock (_gate)
         {
@@ -39,9 +40,11 @@ public sealed class TradeScratchCheckpointLifecycle(
 
                 pendingTrades.Add(trade);
             }
+
+            result = _pendingTradesByInstrument.Sum(pair => pair.Value.Count);
         }
 
-        return ValueTask.CompletedTask;
+        return ValueTask.FromResult(result);
     }
 
     /// <summary>

@@ -10,9 +10,9 @@ public sealed class NullTradeCheckpointLifecycle : ITradeCheckpointLifecycle
     /// <summary>
     /// Ignores tracked trades.
     /// </summary>
-    public ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+    public ValueTask<int> TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
     {
-        return ValueTask.CompletedTask;
+        return ValueTask.FromResult(0);
     }
 
     /// <summary>

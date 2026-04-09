@@ -140,7 +140,7 @@ public sealed class TradeDeduplicationTests
         var deduplicator = new InMemoryTradeDeduplicator(options);
         var logMoq = new Mock<ILogMachina<TradeIngestWorker>>();
 
-        var worker = new TradeIngestWorker(stateStoreMoq.Object, new CheckpointSignal(), checkpointLifecycle, deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(stateStoreMoq.Object, new CheckpointSignal(), checkpointLifecycle, new TradeCheckpointTriggerOptions(1024), deduplicator, stats, logMoq.Object);
         return worker;
     }
 
@@ -154,10 +154,10 @@ public sealed class TradeDeduplicationTests
     {
         public List<IReadOnlyList<TradeInfo>> TrackedTradeBatches { get; } = [];
 
-        public ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+        public ValueTask<int> TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
         {
             TrackedTradeBatches.Add(trades.ToArray());
-            return ValueTask.CompletedTask;
+            return ValueTask.FromResult(TrackedTradeBatches.Sum(batch => batch.Count));
         }
 
         public ValueTask<bool> CheckpointActive(CancellationToken cancellationToken)

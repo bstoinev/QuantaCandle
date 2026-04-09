@@ -29,6 +29,7 @@ public static class TradeRecorderCompositionRoot
         container.AddLogMachina(c => c.WithNLog(Lifestyle.Singleton));
 
         container.RegisterInstance(options.CollectorOptions);
+        container.RegisterInstance(new TradeCheckpointTriggerOptions(options.CacheSize));
         container.RegisterInstance(options.RetryOptions);
 
         container.RegisterSingleton<IClock, SystemClock>();

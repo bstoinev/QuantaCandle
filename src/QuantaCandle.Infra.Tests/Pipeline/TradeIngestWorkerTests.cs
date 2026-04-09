@@ -17,7 +17,7 @@ public sealed class TradeIngestWorkerTests
     {
         var options = CreateOptions(batchSize: 3);
         var checkpointLifecycle = new RecordingCheckpointLifecycle();
-        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out var stats, out _);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, 1024, out var stats, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -44,7 +44,7 @@ public sealed class TradeIngestWorkerTests
     {
         var options = CreateOptions(batchSize: 3);
         var checkpointLifecycle = new RecordingCheckpointLifecycle();
-        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out var stats, out _);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, 1024, out var stats, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -70,7 +70,7 @@ public sealed class TradeIngestWorkerTests
     {
         var options = CreateOptions(batchSize: 3);
         var checkpointLifecycle = new RecordingCheckpointLifecycle();
-        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out _);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, cacheSize: 10, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -92,7 +92,7 @@ public sealed class TradeIngestWorkerTests
             CheckpointResult = true,
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, 1024, out _, out var logMoq);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -117,7 +117,7 @@ public sealed class TradeIngestWorkerTests
             CheckpointResult = false,
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, 1024, out _, out var logMoq);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -131,7 +131,7 @@ public sealed class TradeIngestWorkerTests
         using var stoppingCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
         var options = CreateOptions(batchSize: 3, checkpointInterval: TimeSpan.FromHours(1));
         var checkpointLifecycle = new RecordingCheckpointLifecycle();
-        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out var logMoq);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, cacheSize: 10, out _, out var logMoq);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -152,7 +152,7 @@ public sealed class TradeIngestWorkerTests
         {
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, out _, out _);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, 1024, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         await worker.Run(channel.Reader, options, stoppingCts.Token);
@@ -170,11 +170,98 @@ public sealed class TradeIngestWorkerTests
         {
             OnCheckpoint = stoppingCts.Cancel,
         };
-        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), checkpointSignal, checkpointLifecycle, out _, out _);
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), checkpointSignal, checkpointLifecycle, cacheSize: 10, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, stoppingCts.Token);
 
+        checkpointSignal.Signal();
+
+        await run;
+
+        Assert.Equal(1, checkpointLifecycle.CheckpointCallCount);
+    }
+
+    [Fact]
+    public async Task CacheThresholdDoesNotCheckpointBelowLimit()
+    {
+        var options = CreateOptions(batchSize: 1, checkpointInterval: TimeSpan.FromHours(1));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle();
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, cacheSize: 3, out _, out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        var run = worker.Run(channel.Reader, options, CancellationToken.None);
+
+        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
+        await channel.Writer.WriteAsync(CreateTrade("1", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)));
+
+        channel.Writer.Complete();
+        await run;
+
+        Assert.Equal(0, checkpointLifecycle.CheckpointCallCount);
+    }
+
+    [Fact]
+    public async Task CacheThresholdTriggersCheckpointExactlyAtLimit()
+    {
+        using var stoppingCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var options = CreateOptions(batchSize: 1, checkpointInterval: TimeSpan.FromHours(1));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle
+        {
+            OnCheckpoint = stoppingCts.Cancel,
+        };
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, cacheSize: 2, out _, out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        var run = worker.Run(channel.Reader, options, stoppingCts.Token);
+
+        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
+        await channel.Writer.WriteAsync(CreateTrade("1", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)));
+
+        await run;
+
+        Assert.Equal(1, checkpointLifecycle.CheckpointCallCount);
+    }
+
+    [Fact]
+    public async Task CacheThresholdQueuesOnlyOneCheckpointBeforeFirstRequestIsHandled()
+    {
+        using var stoppingCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var options = CreateOptions(batchSize: 1, checkpointInterval: TimeSpan.FromHours(1));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle
+        {
+            OnCheckpoint = stoppingCts.Cancel,
+        };
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), new CheckpointSignal(), checkpointLifecycle, cacheSize: 2, out _, out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        var run = worker.Run(channel.Reader, options, stoppingCts.Token);
+
+        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
+        await channel.Writer.WriteAsync(CreateTrade("1", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)));
+        await channel.Writer.WriteAsync(CreateTrade("2", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero)));
+
+        await run;
+
+        Assert.Equal(1, checkpointLifecycle.CheckpointCallCount);
+    }
+
+    [Fact]
+    public async Task ManualCheckpointSignalStillRunsBelowCacheThreshold()
+    {
+        using var stoppingCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var checkpointSignal = new CheckpointSignal();
+        var options = CreateOptions(batchSize: 1, checkpointInterval: TimeSpan.FromHours(1));
+        var checkpointLifecycle = new RecordingCheckpointLifecycle
+        {
+            OnCheckpoint = stoppingCts.Cancel,
+        };
+        var worker = CreateWorker(options, new InMemoryIngestionStateStore(), checkpointSignal, checkpointLifecycle, cacheSize: 3, out _, out _);
+        var channel = Channel.CreateUnbounded<TradeInfo>();
+
+        var run = worker.Run(channel.Reader, options, stoppingCts.Token);
+
+        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
         checkpointSignal.Signal();
 
         await run;
@@ -189,7 +276,7 @@ public sealed class TradeIngestWorkerTests
         var appendObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stateStore = new BlockingIngestionStateStore();
         var checkpointLifecycle = new RecordingCheckpointLifecycle { AppendObserved = appendObserved };
-        var worker = CreateWorker(options, stateStore, new CheckpointSignal(), checkpointLifecycle, out _, out _);
+        var worker = CreateWorker(options, stateStore, new CheckpointSignal(), checkpointLifecycle, 1024, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
         var run = worker.Run(channel.Reader, options, CancellationToken.None);
@@ -353,6 +440,7 @@ public sealed class TradeIngestWorkerTests
         IIngestionStateStore ingestionStateStore,
         ICheckpointSignal checkpointSignal,
         ITradeCheckpointLifecycle tradeCheckpointLifecycle,
+        int cacheSize,
         out TradePipelineStats stats,
         out Mock<ILogMachina<TradeIngestWorker>> logMoq)
     {
@@ -360,7 +448,7 @@ public sealed class TradeIngestWorkerTests
         var deduplicator = new InMemoryTradeDeduplicator(options);
         logMoq = new Mock<ILogMachina<TradeIngestWorker>>();
 
-        var worker = new TradeIngestWorker(ingestionStateStore, checkpointSignal, tradeCheckpointLifecycle, deduplicator, stats, logMoq.Object);
+        var worker = new TradeIngestWorker(ingestionStateStore, checkpointSignal, tradeCheckpointLifecycle, new TradeCheckpointTriggerOptions(cacheSize), deduplicator, stats, logMoq.Object);
 
         return worker;
     }
@@ -371,7 +459,7 @@ public sealed class TradeIngestWorkerTests
         out TradePipelineStats stats,
         out Mock<ILogMachina<TradeIngestWorker>> logMoq)
     {
-        return CreateWorker(options, ingestionStateStore, new CheckpointSignal(), new RecordingCheckpointLifecycle(), out stats, out logMoq);
+        return CreateWorker(options, ingestionStateStore, new CheckpointSignal(), new RecordingCheckpointLifecycle(), 1024, out stats, out logMoq);
     }
 
     private static TradeInfo CreateTrade(string tradeId, Instrument instrument, DateTimeOffset timestamp)
@@ -456,6 +544,8 @@ public sealed class TradeIngestWorkerTests
 
     private sealed class RecordingCheckpointLifecycle : ITradeCheckpointLifecycle
     {
+        private int _trackedTradeCount;
+
         public bool CheckpointResult { get; init; }
 
         public Action? OnCheckpoint { get; init; }
@@ -470,17 +560,23 @@ public sealed class TradeIngestWorkerTests
 
         public List<IReadOnlyList<TradeInfo>> TrackedTradeBatches { get; } = [];
 
-        public ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+        public ValueTask<int> TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
         {
             TrackAppendedTradesCallCount++;
             TrackedTradeBatches.Add(trades.ToArray());
+            _trackedTradeCount += trades.Count;
             AppendObserved?.TrySetResult();
-            return ValueTask.CompletedTask;
+            return ValueTask.FromResult(_trackedTradeCount);
         }
 
         public ValueTask<bool> CheckpointActive(CancellationToken cancellationToken)
         {
             CheckpointCallCount++;
+            if (_trackedTradeCount > 0)
+            {
+                _trackedTradeCount = 1;
+            }
+
             OnCheckpoint?.Invoke();
 
             var result = ValueTask.FromResult(CheckpointResult);

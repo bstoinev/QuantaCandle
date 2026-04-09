@@ -71,6 +71,7 @@ public sealed class TradeRecorderCompositionRootTests
         {
             using var container = new Container();
             var options = new TradeRecorderRunOptions(Duration: null,
+                CacheSize: 1024,
                 new CollectorOptions(Instruments: ["BTC-USDT"], ChannelCapacity: 100, BatchSize: 100, FlushInterval: TimeSpan.FromSeconds(1), CheckpointInterval: TimeSpan.FromHours(1)),
                 new RetryOptions(InitialDelay: TimeSpan.FromMilliseconds(100), MaxDelay: TimeSpan.FromSeconds(5)),
                 new TradeRecorderSourceRegistration(BinanceOptions: null,
