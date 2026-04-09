@@ -25,12 +25,12 @@ public sealed class TradeSinkFileSimple : ITradeFinalizedFileDispatcher, ITradeS
     /// <summary>
     /// Confirms that the supplied finalized local daily file exists beneath the configured output directory.
     /// </summary>
-    public ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
+    public ValueTask DispatchAsync(ExchangeId exchange, Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(finalizedFilePath);
         cancellationToken.ThrowIfCancellationRequested();
 
-        _ = TradeLocalDailyFilePath.ValidateFinalized(_options.OutputDirectory, instrument, utcDate, finalizedFilePath);
+        _ = TradeLocalDailyFilePath.ValidateFinalized(_options.OutputDirectory, exchange, instrument, utcDate, finalizedFilePath);
 
         if (!File.Exists(finalizedFilePath))
         {
@@ -44,12 +44,12 @@ public sealed class TradeSinkFileSimple : ITradeFinalizedFileDispatcher, ITradeS
     /// <summary>
     /// Confirms that the supplied ad-hoc scratch snapshot file exists beneath the configured output directory.
     /// </summary>
-    public ValueTask DispatchAsync(Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
+    public ValueTask DispatchAsync(ExchangeId exchange, Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(snapshotFilePath);
         cancellationToken.ThrowIfCancellationRequested();
 
-        _ = TradeLocalDailyFilePath.ValidateSnapshot(_options.OutputDirectory, instrument, snapshotFilePath);
+        _ = TradeLocalDailyFilePath.ValidateSnapshot(_options.OutputDirectory, exchange, instrument, snapshotFilePath);
 
         if (!File.Exists(snapshotFilePath))
         {

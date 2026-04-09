@@ -16,7 +16,7 @@ public sealed class TradeCollectorHostedService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await tradeRecorderStartupTask.Run(options.Instruments, stoppingToken).ConfigureAwait(false);
+        await tradeRecorderStartupTask.Run(tradeSource.Exchange, options.Instruments, stoppingToken).ConfigureAwait(false);
 
         using CancellationTokenSource collectorCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         CancellationToken collectorToken = collectorCts.Token;

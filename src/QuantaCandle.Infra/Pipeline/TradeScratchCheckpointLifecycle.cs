@@ -73,7 +73,7 @@ public sealed class TradeScratchCheckpointLifecycle(
                 continue;
             }
 
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRootDirectory, pair.Key.Symbol);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRootDirectory, pair.Key.Exchange, pair.Key.Symbol);
             var persistenceState = await PersistScratchStateAsync(pair.Key.Exchange, pair.Key.Symbol, scratchPath, pair.Value.TradesToPersist, cancellationToken).ConfigureAwait(false);
             await RecordCurrentBatchGapsAsync(pair.Key.Exchange, pair.Key.Symbol, pair.Value.TradesToPersist, cancellationToken).ConfigureAwait(false);
 
@@ -84,7 +84,7 @@ public sealed class TradeScratchCheckpointLifecycle(
 
             if (File.Exists(scratchPath))
             {
-                checkpointSnapshotContexts.Add(new ActiveScratchSnapshotContext(pair.Key.Symbol, scratchPath));
+                checkpointSnapshotContexts.Add(new ActiveScratchSnapshotContext(pair.Key.Exchange, pair.Key.Symbol, scratchPath));
             }
         }
 
@@ -110,28 +110,28 @@ public sealed class TradeScratchCheckpointLifecycle(
             snapshotContexts = [.. _lastCheckpointSnapshotContexts];
         }
 
-        var snapshotPaths = new List<(Instrument Instrument, string SnapshotPath)>(snapshotContexts.Count);
+        var snapshotPaths = new List<(ExchangeId Exchange, Instrument Instrument, string SnapshotPath)>(snapshotContexts.Count);
 
         foreach (var snapshotContext in snapshotContexts)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRootDirectory, snapshotContext.Instrument, snapshotUtcTimestamp);
+            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRootDirectory, snapshotContext.Exchange, snapshotContext.Instrument, snapshotUtcTimestamp);
             var snapshotDirectory = Path.GetDirectoryName(snapshotPath);
             if (!string.IsNullOrWhiteSpace(snapshotDirectory))
             {
                 Directory.CreateDirectory(snapshotDirectory);
             }
 
-            log.Info($"Trade scratch snapshot export: instrument={snapshotContext.Instrument}, from={snapshotContext.ScratchPath}, to={snapshotPath}.");
+            log.Info($"Trade scratch snapshot export: exchange={snapshotContext.Exchange}, instrument={snapshotContext.Instrument}, from={snapshotContext.ScratchPath}, to={snapshotPath}.");
             File.Copy(snapshotContext.ScratchPath, snapshotPath, overwrite: false);
-            snapshotPaths.Add((snapshotContext.Instrument, snapshotPath));
+            snapshotPaths.Add((snapshotContext.Exchange, snapshotContext.Instrument, snapshotPath));
         }
 
         foreach (var snapshotPath in snapshotPaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await tradeSnapshotFileDispatcher.DispatchAsync(snapshotPath.Instrument, snapshotPath.SnapshotPath, cancellationToken).ConfigureAwait(false);
+            await tradeSnapshotFileDispatcher.DispatchAsync(snapshotPath.Exchange, snapshotPath.Instrument, snapshotPath.SnapshotPath, cancellationToken).ConfigureAwait(false);
         }
 
         return snapshotPaths.Count > 0;
@@ -213,8 +213,8 @@ public sealed class TradeScratchCheckpointLifecycle(
                 {
                     if (File.Exists(scratchPath))
                     {
-                        var recoveredFinalizedPath = await FinalizeScratchAsync(instrument, currentScratchUtcDate, scratchPath, cancellationToken).ConfigureAwait(false);
-                        await DispatchFinalizedFileAsync(instrument, currentScratchUtcDate, recoveredFinalizedPath, cancellationToken).ConfigureAwait(false);
+                        var recoveredFinalizedPath = await FinalizeScratchAsync(exchange, instrument, currentScratchUtcDate, scratchPath, cancellationToken).ConfigureAwait(false);
+                        await DispatchFinalizedFileAsync(exchange, instrument, currentScratchUtcDate, recoveredFinalizedPath, cancellationToken).ConfigureAwait(false);
                     }
 
                     currentScratchUtcDate = DateOnly.FromDateTime(remainingTrades[0].Timestamp.UtcDateTime);
@@ -223,8 +223,8 @@ public sealed class TradeScratchCheckpointLifecycle(
 
                 await AppendTradesToScratchAsync(instrument, scratchPath, finalizedTrades, cancellationToken).ConfigureAwait(false);
                 lastRecordedTrade = finalizedTrades[^1];
-                var finalizedPath = await FinalizeScratchAsync(instrument, currentScratchUtcDate, scratchPath, cancellationToken).ConfigureAwait(false);
-                await DispatchFinalizedFileAsync(instrument, currentScratchUtcDate, finalizedPath, cancellationToken).ConfigureAwait(false);
+                var finalizedPath = await FinalizeScratchAsync(exchange, instrument, currentScratchUtcDate, scratchPath, cancellationToken).ConfigureAwait(false);
+                await DispatchFinalizedFileAsync(exchange, instrument, currentScratchUtcDate, finalizedPath, cancellationToken).ConfigureAwait(false);
 
                 remainingTrades.RemoveRange(0, finalizedTrades.Length);
                 currentScratchUtcDate = remainingTrades.Count > 0
@@ -295,6 +295,7 @@ public sealed class TradeScratchCheckpointLifecycle(
     }
 
     private async Task<string> FinalizeScratchAsync(
+        ExchangeId exchange,
         Instrument instrument,
         DateOnly utcDate,
         string scratchPath,
@@ -302,7 +303,7 @@ public sealed class TradeScratchCheckpointLifecycle(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var finalizedPath = TradeLocalDailyFilePath.Build(localRootDirectory, instrument, utcDate);
+        var finalizedPath = TradeLocalDailyFilePath.Build(localRootDirectory, exchange, instrument, utcDate);
         var finalizedDirectory = Path.GetDirectoryName(finalizedPath);
 
         if (!string.IsNullOrWhiteSpace(finalizedDirectory))
@@ -315,7 +316,7 @@ public sealed class TradeScratchCheckpointLifecycle(
             throw new InvalidOperationException($"The finalized day file already exists: {finalizedPath}.");
         }
 
-        log.Info($"Trade scratch checkpoint finalize: instrument={instrument}, utcDate={utcDate:yyyy-MM-dd}, from={scratchPath}, to={finalizedPath}.");
+        log.Info($"Trade scratch checkpoint finalize: exchange={exchange}, instrument={instrument}, utcDate={utcDate:yyyy-MM-dd}, from={scratchPath}, to={finalizedPath}.");
         File.Move(scratchPath, finalizedPath);
 
         var result = finalizedPath;
@@ -323,12 +324,13 @@ public sealed class TradeScratchCheckpointLifecycle(
     }
 
     private async Task DispatchFinalizedFileAsync(
+        ExchangeId exchange,
         Instrument instrument,
         DateOnly utcDate,
         string finalizedPath,
         CancellationToken cancellationToken)
     {
-        await tradeFinalizedFileDispatcher.DispatchAsync(instrument, utcDate, finalizedPath, cancellationToken).ConfigureAwait(false);
+        await tradeFinalizedFileDispatcher.DispatchAsync(exchange, instrument, utcDate, finalizedPath, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task RecordCurrentBatchGapsAsync(
@@ -421,8 +423,10 @@ public sealed class TradeScratchCheckpointLifecycle(
     /// <summary>
     /// Describes one persisted active scratch file that can be exported as a point-in-time snapshot.
     /// </summary>
-    private sealed class ActiveScratchSnapshotContext(Instrument instrument, string scratchPath)
+    private sealed class ActiveScratchSnapshotContext(ExchangeId exchange, Instrument instrument, string scratchPath)
     {
+        public ExchangeId Exchange { get; } = exchange;
+
         public Instrument Instrument { get; } = instrument;
 
         public string ScratchPath { get; } = scratchPath;

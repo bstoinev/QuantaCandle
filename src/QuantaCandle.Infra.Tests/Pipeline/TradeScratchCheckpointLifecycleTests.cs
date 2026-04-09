@@ -15,6 +15,8 @@ namespace QuantaCandle.Infra.Tests.Pipeline;
 /// </summary>
 public sealed class TradeScratchCheckpointLifecycleTests
 {
+    private static readonly ExchangeId StubExchange = new("Stub");
+
     [Fact]
     public async Task SameDayCheckpointAppendsOnlyToQcScratchJsonl()
     {
@@ -35,8 +37,8 @@ public sealed class TradeScratchCheckpointLifecycleTests
             await lifecycle.CheckpointActive(CancellationToken.None);
 
             var instrument = Instrument.Parse("BTC-USDT");
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
-            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 12));
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, instrument);
+            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 12));
             var payload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
 
             Assert.True(File.Exists(scratchPath));
@@ -58,7 +60,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
         try
         {
             var instrument = Instrument.Parse("BTC-USDT");
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, instrument);
             var priorDayTrades = new[]
             {
                 CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero)),
@@ -79,7 +81,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
             await lifecycle.CheckpointActive(CancellationToken.None);
 
-            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 12));
+            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 12));
             var finalizedPayload = await File.ReadAllTextAsync(finalizedPath, CancellationToken.None);
             var scratchPayload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
             var dispatch = Assert.Single(dispatcher.Dispatches);
@@ -117,8 +119,8 @@ public sealed class TradeScratchCheckpointLifecycleTests
             await lifecycle.CheckpointActive(CancellationToken.None);
 
             var instrument = Instrument.Parse("BTC-USDT");
-            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 12));
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
+            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 12));
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, instrument);
             var finalizedPayload = await File.ReadAllTextAsync(finalizedPath, CancellationToken.None);
             var scratchPayload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
             var dispatch = Assert.Single(dispatcher.Dispatches);
@@ -181,7 +183,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
         try
         {
             var (lifecycle, _) = CreateLifecycle(localRoot);
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT"));
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, Instrument.Parse("BTC-USDT"));
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -217,7 +219,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
         {
             var (lifecycle, _) = CreateLifecycle(localRoot);
             var instrument = Instrument.Parse("BTC-USDT");
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, instrument);
 
             await lifecycle.TrackAppendedTrades(
             [
@@ -257,7 +259,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
         try
         {
             var (lifecycle, stateStore) = CreateLifecycle(localRoot);
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, "BTC-USDT");
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, "BTC-USDT");
 
             Directory.CreateDirectory(Path.GetDirectoryName(scratchPath)!);
             var payload = TradeJsonlFile.BuildPayload(
@@ -276,7 +278,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
             await lifecycle.TrackAppendedTrades(appendedTrades, CancellationToken.None);
             await lifecycle.CheckpointActive(CancellationToken.None);
 
-            var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), CancellationToken.None);
+            var gaps = await stateStore.GetGapsAsync(StubExchange, Instrument.Parse("BTC-USDT"), CancellationToken.None);
 
             Assert.Empty(gaps);
         }
@@ -303,9 +305,9 @@ public sealed class TradeScratchCheckpointLifecycleTests
             ], CancellationToken.None);
             await lifecycle.CheckpointActive(CancellationToken.None);
 
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT"));
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, Instrument.Parse("BTC-USDT"));
             var payload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
-            var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), CancellationToken.None);
+            var gaps = await stateStore.GetGapsAsync(StubExchange, Instrument.Parse("BTC-USDT"), CancellationToken.None);
             var gap = Assert.Single(gaps);
 
             Assert.Equal(["1", "4"], ParseTradeIds(payload));
@@ -338,7 +340,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
             await lifecycle.CheckpointActive(CancellationToken.None);
 
             var instrument = Instrument.Parse("BTC-USDT");
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, instrument);
             var scratchPayloadBeforeSnapshot = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
 
             var snapshotDispatched = await lifecycle.DispatchActiveSnapshot(CancellationToken.None);
@@ -370,7 +372,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
             var snapshotDispatcher = new RecordingTradeSnapshotFileDispatcher();
             var clock = new StubClock(new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
             var (lifecycle, _) = CreateLifecycle(localRoot, tradeSnapshotFileDispatcher: snapshotDispatcher, clock: clock);
-            var ignoredScratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("ETH-USDT"));
+            var ignoredScratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, Instrument.Parse("ETH-USDT"));
 
             Directory.CreateDirectory(Path.GetDirectoryName(ignoredScratchPath)!);
             await File.WriteAllTextAsync(
@@ -393,6 +395,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
             var dispatch = Assert.Single(snapshotDispatcher.Dispatches);
 
+            Assert.Equal(StubExchange, dispatch.Exchange);
             Assert.Equal("BTC-USDT", dispatch.Instrument.ToString());
             Assert.DoesNotContain("ETH-USDT", dispatch.SnapshotFilePath, StringComparison.Ordinal);
             Assert.True(File.Exists(ignoredScratchPath));
@@ -448,7 +451,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
     private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp, string instrumentText = "BTC-USDT")
     {
-        var key = new TradeKey(new ExchangeId("Stub"), Instrument.Parse(instrumentText), tradeId);
+        var key = new TradeKey(StubExchange, Instrument.Parse(instrumentText), tradeId);
         var result = new TradeInfo(key, timestamp, 1m, 1m);
         return result;
     }
@@ -491,22 +494,22 @@ public sealed class TradeScratchCheckpointLifecycleTests
     {
         public List<DispatchCall> Dispatches { get; } = [];
 
-        public ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
+        public ValueTask DispatchAsync(ExchangeId exchange, Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
         {
-            Dispatches.Add(new DispatchCall(instrument, utcDate, finalizedFilePath, File.Exists(finalizedFilePath)));
+            Dispatches.Add(new DispatchCall(exchange, instrument, utcDate, finalizedFilePath, File.Exists(finalizedFilePath)));
             return ValueTask.CompletedTask;
         }
     }
 
-    private sealed record DispatchCall(Instrument Instrument, DateOnly UtcDate, string FinalizedFilePath, bool FileExistedAtDispatch);
+    private sealed record DispatchCall(ExchangeId Exchange, Instrument Instrument, DateOnly UtcDate, string FinalizedFilePath, bool FileExistedAtDispatch);
 
     private sealed class RecordingTradeSnapshotFileDispatcher : ITradeSnapshotFileDispatcher
     {
         public List<SnapshotDispatchCall> Dispatches { get; } = [];
 
-        public ValueTask DispatchAsync(Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
+        public ValueTask DispatchAsync(ExchangeId exchange, Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
         {
-            Dispatches.Add(new SnapshotDispatchCall(instrument, snapshotFilePath, File.Exists(snapshotFilePath)));
+            Dispatches.Add(new SnapshotDispatchCall(exchange, instrument, snapshotFilePath, File.Exists(snapshotFilePath)));
             return ValueTask.CompletedTask;
         }
     }
@@ -516,5 +519,5 @@ public sealed class TradeScratchCheckpointLifecycleTests
         public DateTimeOffset UtcNow { get; } = utcNow;
     }
 
-    private sealed record SnapshotDispatchCall(Instrument Instrument, string SnapshotFilePath, bool FileExistedAtDispatch);
+    private sealed record SnapshotDispatchCall(ExchangeId Exchange, Instrument Instrument, string SnapshotFilePath, bool FileExistedAtDispatch);
 }

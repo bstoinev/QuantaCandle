@@ -9,6 +9,8 @@ namespace QuantaCandle.Infra.Tests.Storage;
 
 public sealed class TradeSinkS3SimpleTests
 {
+    private static readonly ExchangeId StubExchange = new("Stub");
+
     [Fact]
     public async Task DispatchUploadsOnlyTheSuppliedFinalizedFilePath()
     {
@@ -22,17 +24,17 @@ public sealed class TradeSinkS3SimpleTests
                 uploaderMoq.Object,
                 CreateLogMoq().Object);
             var instrument = Instrument.Parse("BTC-USDT");
-            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 11));
-            var ignoredPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 10));
+            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 11));
+            var ignoredPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 10));
 
             await WriteTradeFileAsync(dispatchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
             await WriteTradeFileAsync(ignoredPath, [CreateTrade("122", new DateTimeOffset(2026, 3, 10, 23, 59, 59, TimeSpan.Zero), 9m)]);
 
-            await sink.DispatchAsync(instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None);
+            await sink.DispatchAsync(StubExchange, instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None);
 
             var upload = Assert.Single(uploads);
             Assert.Equal("my-bucket", upload.BucketName);
-            Assert.Equal("trades/raw/BTC-USDT/2026-03-11.jsonl", upload.ObjectKey);
+            Assert.Equal("trades/raw/Stub/BTC-USDT/2026-03-11.jsonl", upload.ObjectKey);
             Assert.Contains("\"tradeId\":\"123\"", upload.Payload, StringComparison.Ordinal);
             Assert.DoesNotContain("\"tradeId\":\"122\"", upload.Payload, StringComparison.Ordinal);
             Assert.False(File.Exists(dispatchPath));
@@ -63,11 +65,11 @@ public sealed class TradeSinkS3SimpleTests
                 uploaderMoq.Object,
                 CreateLogMoq().Object);
             var instrument = Instrument.Parse("BTC-USDT");
-            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 11));
+            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 11));
 
             await WriteTradeFileAsync(dispatchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
 
-            await sink.DispatchAsync(instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None);
+            await sink.DispatchAsync(StubExchange, instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None);
 
             Assert.True(uploadCompleted);
             Assert.False(File.Exists(dispatchPath));
@@ -95,11 +97,11 @@ public sealed class TradeSinkS3SimpleTests
                 uploaderMoq.Object,
                 CreateLogMoq().Object);
             var instrument = Instrument.Parse("BTC-USDT");
-            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, instrument, new DateOnly(2026, 3, 11));
+            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 11));
 
             await WriteTradeFileAsync(dispatchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None).AsTask());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(StubExchange, instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None).AsTask());
 
             Assert.True(File.Exists(dispatchPath));
         }
@@ -122,11 +124,11 @@ public sealed class TradeSinkS3SimpleTests
                 uploaderMoq.Object,
                 CreateLogMoq().Object);
             var instrument = Instrument.Parse("BTC-USDT");
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, instrument);
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, instrument);
 
             await WriteTradeFileAsync(scratchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(instrument, new DateOnly(2026, 3, 11), scratchPath, CancellationToken.None).AsTask());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(StubExchange, instrument, new DateOnly(2026, 3, 11), scratchPath, CancellationToken.None).AsTask());
         }
         finally
         {
@@ -147,15 +149,15 @@ public sealed class TradeSinkS3SimpleTests
                 uploaderMoq.Object,
                 CreateLogMoq().Object);
             var instrument = Instrument.Parse("BTC-USDT");
-            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRoot, instrument, new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRoot, StubExchange, instrument, new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
 
             await WriteTradeFileAsync(snapshotPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero), 10m)]);
 
-            await ((ITradeSnapshotFileDispatcher)sink).DispatchAsync(instrument, snapshotPath, CancellationToken.None);
+            await ((ITradeSnapshotFileDispatcher)sink).DispatchAsync(StubExchange, instrument, snapshotPath, CancellationToken.None);
 
             var upload = Assert.Single(uploads);
             Assert.Equal("my-bucket", upload.BucketName);
-            Assert.Equal("trades/raw/BTC-USDT/2026-03-12.141516789.jsonl", upload.ObjectKey);
+            Assert.Equal("trades/raw/Stub/BTC-USDT/2026-03-12.141516789.jsonl", upload.ObjectKey);
             Assert.Contains("\"tradeId\":\"123\"", upload.Payload, StringComparison.Ordinal);
             Assert.True(File.Exists(snapshotPath));
         }
@@ -182,11 +184,11 @@ public sealed class TradeSinkS3SimpleTests
                 uploaderMoq.Object,
                 CreateLogMoq().Object);
             var instrument = Instrument.Parse("BTC-USDT");
-            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRoot, instrument, new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRoot, StubExchange, instrument, new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
 
             await WriteTradeFileAsync(snapshotPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero), 10m)]);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() => ((ITradeSnapshotFileDispatcher)sink).DispatchAsync(instrument, snapshotPath, CancellationToken.None).AsTask());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => ((ITradeSnapshotFileDispatcher)sink).DispatchAsync(StubExchange, instrument, snapshotPath, CancellationToken.None).AsTask());
 
             Assert.True(File.Exists(snapshotPath));
         }
@@ -231,7 +233,7 @@ public sealed class TradeSinkS3SimpleTests
 
     private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp, decimal price)
     {
-        var key = new TradeKey(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), tradeId);
+        var key = new TradeKey(StubExchange, Instrument.Parse("BTC-USDT"), tradeId);
         return new TradeInfo(key, timestamp, price, quantity: 0.5m);
     }
 

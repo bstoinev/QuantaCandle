@@ -8,5 +8,5 @@ public interface ITradeFinalizedFileDispatcher
     /// <summary>
     /// Dispatches the supplied finalized local daily file.
     /// </summary>
-    ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken);
+    ValueTask DispatchAsync(ExchangeId exchange, Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken);
 }

@@ -36,15 +36,15 @@ public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher, ITradeSna
     /// <summary>
     /// Uploads the supplied finalized local day file to S3 and deletes it only after success.
     /// </summary>
-    public async ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
+    public async ValueTask DispatchAsync(ExchangeId exchange, Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(finalizedFilePath);
 
         cancellationToken.ThrowIfCancellationRequested();
-        _ = TradeLocalDailyFilePath.ValidateFinalized(_options.LocalRootDirectory, instrument, utcDate, finalizedFilePath);
+        _ = TradeLocalDailyFilePath.ValidateFinalized(_options.LocalRootDirectory, exchange, instrument, utcDate, finalizedFilePath);
 
         var payload = await File.ReadAllTextAsync(finalizedFilePath, cancellationToken).ConfigureAwait(false);
-        var objectKey = TradeSinkS3DailyObjectKey.Build(_options.Prefix, instrument.ToString(), utcDate);
+        var objectKey = TradeSinkS3DailyObjectKey.Build(_options.Prefix, exchange.ToString(), instrument.ToString(), utcDate);
         _log.Info($"Trade S3 upload start: bucket={_options.BucketName}, objectKey={objectKey}, path={finalizedFilePath}.");
 
         try
@@ -65,16 +65,16 @@ public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher, ITradeSna
     /// <summary>
     /// Uploads the supplied ad-hoc scratch snapshot file to S3 without deleting the local artifact.
     /// </summary>
-    public async ValueTask DispatchAsync(Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
+    public async ValueTask DispatchAsync(ExchangeId exchange, Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(snapshotFilePath);
 
         cancellationToken.ThrowIfCancellationRequested();
-        _ = TradeLocalDailyFilePath.ValidateSnapshot(_options.LocalRootDirectory, instrument, snapshotFilePath);
+        _ = TradeLocalDailyFilePath.ValidateSnapshot(_options.LocalRootDirectory, exchange, instrument, snapshotFilePath);
 
         var payload = await File.ReadAllTextAsync(snapshotFilePath, cancellationToken).ConfigureAwait(false);
         var snapshotFileName = Path.GetFileName(snapshotFilePath);
-        var objectKey = TradeSinkS3SnapshotObjectKey.Build(_options.Prefix, instrument.ToString(), snapshotFileName);
+        var objectKey = TradeSinkS3SnapshotObjectKey.Build(_options.Prefix, exchange.ToString(), instrument.ToString(), snapshotFileName);
         _log.Info($"Trade S3 snapshot upload start: bucket={_options.BucketName}, objectKey={objectKey}, path={snapshotFilePath}.");
 
         try

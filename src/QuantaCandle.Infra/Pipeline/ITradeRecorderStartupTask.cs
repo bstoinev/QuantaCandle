@@ -10,5 +10,5 @@ public interface ITradeRecorderStartupTask
     /// <summary>
     /// Executes startup processing for the configured instruments before live ingest starts.
     /// </summary>
-    ValueTask Run(IReadOnlyList<Instrument> instruments, CancellationToken cancellationToken);
+    ValueTask Run(ExchangeId exchange, IReadOnlyList<Instrument> instruments, CancellationToken cancellationToken);
 }

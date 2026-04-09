@@ -35,6 +35,7 @@ public sealed class TradeCollectorHostedServiceTests
         await hostedService.StopAsync(CancellationToken.None);
 
         Assert.Equal(1, startupTask.RunCallCount);
+        Assert.Equal(new ExchangeId("Stub"), startupTask.Exchange);
         Assert.True(tradeSource.StartupCompletedWhenCollectionStarted);
     }
 
@@ -54,11 +55,14 @@ public sealed class TradeCollectorHostedServiceTests
     {
         public bool Completed { get; private set; }
 
+        public ExchangeId? Exchange { get; private set; }
+
         public int RunCallCount { get; private set; }
 
-        public ValueTask Run(IReadOnlyList<Instrument> instruments, CancellationToken cancellationToken)
+        public ValueTask Run(ExchangeId exchange, IReadOnlyList<Instrument> instruments, CancellationToken cancellationToken)
         {
             RunCallCount++;
+            Exchange = exchange;
             Completed = true;
 
             var result = ValueTask.CompletedTask;

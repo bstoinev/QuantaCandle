@@ -15,12 +15,12 @@ public sealed class TradeFinalizedFileStartupDispatcher(
     /// <summary>
     /// Scans each configured instrument directory once and dispatches finalized files in ascending UTC date order.
     /// </summary>
-    public async ValueTask Run(IReadOnlyList<Instrument> instruments, CancellationToken cancellationToken)
+    public async ValueTask Run(ExchangeId exchange, IReadOnlyList<Instrument> instruments, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localRootDirectory);
         ArgumentNullException.ThrowIfNull(instruments);
 
-        log.Info($"Trade startup finalized-file discovery begin: instrumentCount={instruments.Count}, localRoot={localRootDirectory}.");
+        log.Info($"Trade startup finalized-file discovery begin: exchange={exchange}, instrumentCount={instruments.Count}, localRoot={localRootDirectory}.");
 
         var seenInstruments = new HashSet<Instrument>();
 
@@ -33,14 +33,14 @@ public sealed class TradeFinalizedFileStartupDispatcher(
                 continue;
             }
 
-            var discoveredFiles = TradeLocalDailyFilePath.DiscoverCompleted(localRootDirectory, instrument);
-            log.Debug($"Trade startup finalized-file discovery scan: instrument={instrument}, discoveredFileCount={discoveredFiles.Count}.");
+            var discoveredFiles = TradeLocalDailyFilePath.DiscoverCompleted(localRootDirectory, exchange, instrument);
+            log.Debug($"Trade startup finalized-file discovery scan: exchange={exchange}, instrument={instrument}, discoveredFileCount={discoveredFiles.Count}.");
 
             foreach (var discoveredFile in discoveredFiles)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                log.Info($"Trade startup finalized-file dispatch: instrument={instrument}, utcDate={discoveredFile.UtcDate:yyyy-MM-dd}, path={discoveredFile.Path}.");
-                await tradeFinalizedFileDispatcher.DispatchAsync(instrument, discoveredFile.UtcDate, discoveredFile.Path, cancellationToken).ConfigureAwait(false);
+                log.Info($"Trade startup finalized-file dispatch: exchange={exchange}, instrument={instrument}, utcDate={discoveredFile.UtcDate:yyyy-MM-dd}, path={discoveredFile.Path}.");
+                await tradeFinalizedFileDispatcher.DispatchAsync(exchange, instrument, discoveredFile.UtcDate, discoveredFile.Path, cancellationToken).ConfigureAwait(false);
             }
         }
 

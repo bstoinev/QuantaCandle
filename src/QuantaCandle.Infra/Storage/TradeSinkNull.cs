@@ -10,7 +10,7 @@ public sealed class TradeSinkNull : ITradeFinalizedFileDispatcher, ITradeSnapsho
     /// <summary>
     /// Ignores the supplied finalized file.
     /// </summary>
-    public ValueTask DispatchAsync(Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
+    public ValueTask DispatchAsync(ExchangeId exchange, Instrument instrument, DateOnly utcDate, string finalizedFilePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -21,7 +21,7 @@ public sealed class TradeSinkNull : ITradeFinalizedFileDispatcher, ITradeSnapsho
     /// <summary>
     /// Ignores the supplied ad-hoc snapshot file.
     /// </summary>
-    public ValueTask DispatchAsync(Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
+    public ValueTask DispatchAsync(ExchangeId exchange, Instrument instrument, string snapshotFilePath, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 

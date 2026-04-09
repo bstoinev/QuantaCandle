@@ -9,10 +9,10 @@ public static class TradeSinkS3DailyObjectKey
     /// Creates the S3 object key using the configured prefix, instrument, and UTC calendar date.
     /// The key remains suitable for finalized daily uploads even while active-day buffering stays in memory.
     /// </summary>
-    public static string Build(string? prefix, string instrument, DateOnly utcDate)
+    public static string Build(string? prefix, string exchange, string instrument, DateOnly utcDate)
     {
         var normalizedPrefix = NormalizePrefix(prefix);
-        var objectPath = $"{instrument}/{utcDate:yyyy-MM-dd}.jsonl";
+        var objectPath = $"{exchange}/{instrument}/{utcDate:yyyy-MM-dd}.jsonl";
         var result = string.IsNullOrEmpty(normalizedPrefix)
             ? objectPath
             : $"{normalizedPrefix}/{objectPath}";
