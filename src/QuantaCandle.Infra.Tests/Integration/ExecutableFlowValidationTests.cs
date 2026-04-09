@@ -22,8 +22,7 @@ public sealed class ExecutableFlowValidationTests
     public async Task CollectThenGenerateCreatesCandleFilesWithoutNetworkDependency()
     {
         var root = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
-        var tradeDirectory = Path.Combine(root, "trades");
-        var candleDirectory = Path.Combine(root, "candles");
+        var tradeDirectory = Path.Combine(root, "trades-out");
 
         Directory.CreateDirectory(tradeDirectory);
 
@@ -35,15 +34,16 @@ public sealed class ExecutableFlowValidationTests
             Assert.NotEmpty(tradeFiles);
 
             await RewriteExchangeToBinanceAsync(tradeFiles);
+            MoveTradesIntoExchangeDirectory(tradeFiles, tradeDirectory, "binance");
 
             var generator = new TradeToCandleGenerator();
             var result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(tradeDirectory, candleDirectory, "binance", "1m", "csv"),
+                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", [], "csv"),
                 CancellationToken.None);
 
             Assert.True(result.InputTradeCount > 0);
 
-            var candleInstrumentDirectory = Path.Combine(candleDirectory, "binance", "1m", "BTC-USDT");
+            var candleInstrumentDirectory = Path.Combine(root, "candles-out", "binance", "1m", "BTC-USDT");
             var candleFiles = Directory.GetFiles(candleInstrumentDirectory, "*.csv", SearchOption.AllDirectories);
             Assert.NotEmpty(candleFiles);
 
@@ -164,6 +164,22 @@ public sealed class ExecutableFlowValidationTests
 
             var payload = string.Join(Environment.NewLine, rewrittenLines) + Environment.NewLine;
             await File.WriteAllTextAsync(file, payload, CancellationToken.None);
+        }
+    }
+
+    private static void MoveTradesIntoExchangeDirectory(IEnumerable<string> files, string tradeDirectory, string exchange)
+    {
+        var exchangeDirectory = Path.Combine(tradeDirectory, exchange);
+        Directory.CreateDirectory(exchangeDirectory);
+
+        foreach (var file in files.OrderBy(path => path, StringComparer.Ordinal))
+        {
+            var instrumentDirectoryName = Path.GetFileName(Path.GetDirectoryName(file)) ?? string.Empty;
+            var destinationDirectory = Path.Combine(exchangeDirectory, instrumentDirectoryName);
+            Directory.CreateDirectory(destinationDirectory);
+
+            var destinationPath = Path.Combine(destinationDirectory, Path.GetFileName(file));
+            File.Move(file, destinationPath, overwrite: true);
         }
     }
 }

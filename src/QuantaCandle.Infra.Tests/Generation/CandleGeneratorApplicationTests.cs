@@ -252,4 +252,104 @@ public sealed class CandleGeneratorApplicationTests
         Assert.Contains("qc heal <instrument>", outputWriter.ToString(), StringComparison.Ordinal);
         Assert.Equal(string.Empty, errorWriter.ToString());
     }
+
+    [Fact]
+    public async Task CandlizeModePassesWorkDirectoryInstrumentAndDatesWithoutTempStaging()
+    {
+        var workDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+        var legacyTempDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.CLI");
+        var generationRunnerMoq = new Mock<ICandleGenerationRunner>(MockBehavior.Strict);
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        TradeToCandleGeneratorOptions? capturedOptions = null;
+
+        generationRunnerMoq
+            .Setup(mock => mock.GenerateAsync(It.IsAny<TradeToCandleGeneratorOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<TradeToCandleGeneratorOptions, CancellationToken>((options, _) => capturedOptions = options)
+            .Returns(Task.FromResult(new CandleGenerationResult(2, 2, 0, 2, 2)));
+
+        var app = new CandleGeneratorApplication(generationRunnerMoq.Object, scannerMoq.Object, healerMoq.Object);
+        using var outputWriter = new StringWriter();
+        using var errorWriter = new StringWriter();
+
+        try
+        {
+            if (Directory.Exists(legacyTempDirectory))
+            {
+                Directory.Delete(legacyTempDirectory, recursive: true);
+            }
+
+            var exitCode = await app.Run(
+                ["candlize", "btc-usdt", "--workDir", workDirectory, "--dates", "20260330,20260401"],
+                outputWriter,
+                errorWriter,
+                CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.NotNull(capturedOptions);
+            Assert.Equal(workDirectory, capturedOptions!.WorkDirectory);
+            Assert.Equal("Binance", capturedOptions.Exchange);
+            Assert.Equal("BTC-USDT", capturedOptions.Instrument);
+            Assert.Equal(
+                [
+                    new DateOnly(2026, 3, 30),
+                    new DateOnly(2026, 4, 1),
+                ],
+                capturedOptions.Dates);
+            Assert.False(Directory.Exists(legacyTempDirectory));
+            Assert.Equal(string.Empty, errorWriter.ToString());
+        }
+        finally
+        {
+            if (Directory.Exists(workDirectory))
+            {
+                Directory.Delete(workDirectory, recursive: true);
+            }
+
+            if (Directory.Exists(legacyTempDirectory))
+            {
+                Directory.Delete(legacyTempDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CandlizeModeDefaultsExchangeToBinanceWhenOmitted()
+    {
+        var workDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
+        var generationRunnerMoq = new Mock<ICandleGenerationRunner>(MockBehavior.Strict);
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        TradeToCandleGeneratorOptions? capturedOptions = null;
+
+        generationRunnerMoq
+            .Setup(mock => mock.GenerateAsync(It.IsAny<TradeToCandleGeneratorOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<TradeToCandleGeneratorOptions, CancellationToken>((options, _) => capturedOptions = options)
+            .Returns(Task.FromResult(new CandleGenerationResult(0, 0, 0, 0, 0)));
+
+        var app = new CandleGeneratorApplication(generationRunnerMoq.Object, scannerMoq.Object, healerMoq.Object);
+        using var outputWriter = new StringWriter();
+        using var errorWriter = new StringWriter();
+
+        try
+        {
+            var exitCode = await app.Run(
+                ["candlize", "btc-usdt", "--workDir", workDirectory],
+                outputWriter,
+                errorWriter,
+                CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.NotNull(capturedOptions);
+            Assert.Equal("Binance", capturedOptions!.Exchange);
+            Assert.Equal(string.Empty, errorWriter.ToString());
+        }
+        finally
+        {
+            if (Directory.Exists(workDirectory))
+            {
+                Directory.Delete(workDirectory, recursive: true);
+            }
+        }
+    }
 }

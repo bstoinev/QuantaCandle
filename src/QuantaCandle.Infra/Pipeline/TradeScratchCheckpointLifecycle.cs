@@ -20,7 +20,7 @@ public sealed class TradeScratchCheckpointLifecycle(
     private readonly Dictionary<(ExchangeId Exchange, Instrument Symbol), InstrumentScratchState> _scratchStatesByInstrument = [];
 
     /// <summary>
-    /// Tracks trades that should participate in scratch checkpoints.
+    /// Tracks trades that should participate in checkpoints.
     /// </summary>
     public ValueTask TrackAppendedTrades(IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
     {

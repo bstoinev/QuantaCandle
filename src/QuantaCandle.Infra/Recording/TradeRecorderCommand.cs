@@ -107,17 +107,8 @@ public static class TradeRecorderCommand
         return result;
     }
 
-    private static bool IsCollectCommand(string value)
-    {
-        var isCollectCommand = value.Equals("collect-trades", StringComparison.OrdinalIgnoreCase);
-
-        if (!isCollectCommand)
-        {
-            isCollectCommand = value.Equals("collect", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return isCollectCommand;
-    }
+    private static bool IsCollectCommand(string value) => value.Equals("collect-trades", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("collect", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsHelpArgument(string value)
     {
@@ -175,7 +166,7 @@ public static class TradeRecorderCommand
         return registration;
     }
 
-    private static IReadOnlyList<Instrument> GetInstruments(IReadOnlyDictionary<string, string> options)
+    private static List<Instrument> GetInstruments(IReadOnlyDictionary<string, string> options)
     {
         var raw = GetStringOption(options, "instrument", string.Empty);
         if (string.IsNullOrWhiteSpace(raw))

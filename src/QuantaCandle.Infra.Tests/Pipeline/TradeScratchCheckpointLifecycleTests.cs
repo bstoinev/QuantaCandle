@@ -256,23 +256,23 @@ public sealed class TradeScratchCheckpointLifecycleTests
         try
         {
             var (lifecycle, stateStore) = CreateLifecycle(localRoot);
-            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, Instrument.Parse("BTC-USDT"));
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, "BTC-USDT");
 
             Directory.CreateDirectory(Path.GetDirectoryName(scratchPath)!);
-            await File.WriteAllTextAsync(
-                scratchPath,
-                TradeJsonlFile.BuildPayload(
-                [
-                    CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
-                    CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
-                ]),
-                CancellationToken.None);
-
-            await lifecycle.TrackAppendedTrades(
+            var payload = TradeJsonlFile.BuildPayload(
             [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)),
+                CreateTrade("4", new DateTimeOffset(2026, 3, 12, 0, 0, 3, TimeSpan.Zero)),
+            ]);
+
+            await File.WriteAllTextAsync(scratchPath, payload, CancellationToken.None);
+
+            var appendedTrades = new TradeInfo[] {
                 CreateTrade("5", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
                 CreateTrade("6", new DateTimeOffset(2026, 3, 12, 0, 0, 5, TimeSpan.Zero)),
-            ], CancellationToken.None);
+            };
+
+            await lifecycle.TrackAppendedTrades(appendedTrades, CancellationToken.None);
             await lifecycle.CheckpointActive(CancellationToken.None);
 
             var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), CancellationToken.None);

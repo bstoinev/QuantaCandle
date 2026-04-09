@@ -93,32 +93,20 @@ public sealed class CandleGeneratorApplication(
         TextWriter outputWriter,
         CancellationToken cancellationToken)
     {
-        var tradeRootDirectory = GetTradeRootDirectory(runOptions);
-        var candidateFiles = ResolveCandidateFiles(tradeRootDirectory, runOptions.Instrument, runOptions.Dates);
-        var stagingDirectory = CreateTemporaryStagingDirectory();
+        var generatorOptions = new TradeToCandleGeneratorOptions(
+            runOptions.WorkDirectory,
+            runOptions.Exchange,
+            runOptions.Instrument,
+            "1m",
+            runOptions.Dates,
+            "csv");
+        var generationResult = await _candleGenerationRunner.GenerateAsync(generatorOptions, cancellationToken).ConfigureAwait(false);
 
-        try
-        {
-            CopyCandidateFilesToStagingDirectory(tradeRootDirectory, stagingDirectory, candidateFiles);
-
-            var generatorOptions = new TradeToCandleGeneratorOptions(
-                stagingDirectory,
-                GetCandleRootDirectory(runOptions),
-                runOptions.Exchange,
-                "1m",
-                "csv");
-            var generationResult = await _candleGenerationRunner.GenerateAsync(generatorOptions, cancellationToken).ConfigureAwait(false);
-
-            await outputWriter.WriteLineAsync($"Input trades:".PadLeft(20) + generationResult.InputTradeCount).ConfigureAwait(false);
-            await outputWriter.WriteLineAsync($"Unique trades:".PadLeft(20) + generationResult.UniqueTradeCount).ConfigureAwait(false);
-            await outputWriter.WriteLineAsync($"Duplicates dropped:".PadLeft(20) + generationResult.DuplicatesDropped).ConfigureAwait(false);
-            await outputWriter.WriteLineAsync($"Candles written:".PadLeft(20) + generationResult.CandleCount).ConfigureAwait(false);
-            await outputWriter.WriteLineAsync($"Output files:".PadLeft(20) + generationResult.OutputFileCount).ConfigureAwait(false);
-        }
-        finally
-        {
-            DeleteDirectoryIfPresent(stagingDirectory);
-        }
+        await outputWriter.WriteLineAsync($"Input trades:".PadLeft(20) + generationResult.InputTradeCount).ConfigureAwait(false);
+        await outputWriter.WriteLineAsync($"Unique trades:".PadLeft(20) + generationResult.UniqueTradeCount).ConfigureAwait(false);
+        await outputWriter.WriteLineAsync($"Duplicates dropped:".PadLeft(20) + generationResult.DuplicatesDropped).ConfigureAwait(false);
+        await outputWriter.WriteLineAsync($"Candles written:".PadLeft(20) + generationResult.CandleCount).ConfigureAwait(false);
+        await outputWriter.WriteLineAsync($"Output files:".PadLeft(20) + generationResult.OutputFileCount).ConfigureAwait(false);
 
         return 0;
     }
@@ -266,38 +254,6 @@ public sealed class CandleGeneratorApplication(
         return result;
     }
 
-    private static void CopyCandidateFilesToStagingDirectory(string tradeRootDirectory, string stagingDirectory, IReadOnlyList<TradeGapAffectedFile> candidateFiles)
-    {
-        foreach (var candidateFile in candidateFiles)
-        {
-            var sourcePath = Path.Combine(tradeRootDirectory, candidateFile.Path);
-            var destinationPath = Path.Combine(stagingDirectory, candidateFile.Path);
-            var destinationDirectory = Path.GetDirectoryName(destinationPath);
-
-            if (!string.IsNullOrWhiteSpace(destinationDirectory))
-            {
-                Directory.CreateDirectory(destinationDirectory);
-            }
-
-            File.Copy(sourcePath, destinationPath, true);
-        }
-    }
-
-    private static string CreateTemporaryStagingDirectory()
-    {
-        var result = Path.Combine(Path.GetTempPath(), "QuantaCandle.CLI", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(result);
-        return result;
-    }
-
-    private static void DeleteDirectoryIfPresent(string path)
-    {
-        if (Directory.Exists(path))
-        {
-            Directory.Delete(path, true);
-        }
-    }
-
     private static List<(TradeGap Gap, TradeGapAffectedRange? Range)> FilterGaps(
         TradeGapScanResult scanResult,
         ExchangeId requestedExchange,
@@ -326,12 +282,6 @@ public sealed class CandleGeneratorApplication(
     private static string GetTradeRootDirectory(CandleGeneratorRunOptions runOptions)
     {
         var result = Path.Combine(Path.GetFullPath(runOptions.WorkDirectory), "trades-out");
-        return result;
-    }
-
-    private static string GetCandleRootDirectory(CandleGeneratorRunOptions runOptions)
-    {
-        var result = Path.Combine(Path.GetFullPath(runOptions.WorkDirectory), "candles-out");
         return result;
     }
 
