@@ -3,40 +3,107 @@ using QuantaCandle.Infra;
 namespace QuantaCandle.Infra.Tests.Recording;
 
 /// <summary>
-/// Verifies the option-only command surface exposed by the trade recorder executable.
+/// Verifies the qc-style recorder command surface exposed by the trade recorder executable.
 /// </summary>
 public sealed class TradeRecorderCommandTests
 {
     [Fact]
-    public void ParsesRecorderOptionsWithoutDuration()
+    public void BindsFirstPositionalArgumentToInstrument()
     {
         var options = TradeRecorderCommand.Parse(
         [
-            "--source", "binance",
-            "--instrument", "BTCUSDT",
-            "--sink", "file",
-            "--outDir", "trades-out",
+            "BTCUSDT",
+            "--exchange", "binance",
         ]);
 
-        Assert.Null(options.Duration);
-        Assert.Equal(1024, options.CacheSize);
-        Assert.Equal("trades-out", options.SinkRegistration.FileOptions!.OutputDirectory);
-        Assert.Null(options.SourceRegistration.StubOptions);
+        Assert.Equal(["BTC-USDT"], options.CollectorOptions.Instruments);
         Assert.NotNull(options.SourceRegistration.BinanceOptions);
+        Assert.Null(options.SourceRegistration.StubOptions);
+    }
+
+    [Theory]
+    [InlineData("--exchange")]
+    [InlineData("-x")]
+    public void BindsExchangeOptionAndAlias(string optionName)
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "BTCUSDT",
+            optionName, "stub",
+        ]);
+
+        Assert.NotNull(options.SourceRegistration.StubOptions);
+        Assert.Null(options.SourceRegistration.BinanceOptions);
+        Assert.Equal("Stub", options.SourceRegistration.StubOptions.Exchange.Value);
+    }
+
+    [Theory]
+    [InlineData("--sink")]
+    [InlineData("-to")]
+    public void BindsSinkOptionAndAlias(string optionName)
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "BTCUSDT",
+            "--exchange", "stub",
+            optionName, "null",
+        ]);
+
+        Assert.Null(options.SinkRegistration.FileOptions);
+        Assert.Null(options.SinkRegistration.S3Options);
     }
 
     [Fact]
-    public void ParsesRecorderOptionsWithDuration()
+    public void BindsS3Options()
     {
         var options = TradeRecorderCommand.Parse(
         [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
+            "BTCUSDT",
+            "--exchange", "stub",
+            "--sink", "s3",
+            "--s3Bucket", "bucket-name",
+            "--s3Prefix", "trade-data/",
+            "--outDir", "local-trades",
+        ]);
+
+        Assert.NotNull(options.SinkRegistration.S3Options);
+        Assert.Equal("bucket-name", options.SinkRegistration.S3Options.BucketName);
+        Assert.Equal("trade-data/", options.SinkRegistration.S3Options.Prefix);
+        Assert.Equal("local-trades", options.SinkRegistration.S3Options.LocalRootDirectory);
+    }
+
+    [Fact]
+    public void ParsesRealisticRecorderCommandLine()
+    {
+        var options = TradeRecorderCommand.Parse(
+        [
+            "BTCUSDT",
+            "--exchange", "Binance",
+            "--sink", "s3",
+            "--s3Bucket", "quanta-candle-bucket-eu-north-1",
+            "--s3Prefix", "trade-data/",
             "--duration", "30s",
+            "--rate", "25",
+            "--capacity", "2048",
+            "--batchSize", "250",
+            "--flushInterval", "2s",
+            "--checkpointInterval", "30m",
+            "--cacheSize", "4096",
+            "--outDir", "trades-out",
         ]);
 
         Assert.Equal(TimeSpan.FromSeconds(30), options.Duration);
-        Assert.NotNull(options.SourceRegistration.StubOptions);
+        Assert.Equal(4096, options.CacheSize);
+        Assert.Equal(["BTC-USDT"], options.CollectorOptions.Instruments);
+        Assert.Equal(25, options.CollectorOptions.MaxTradesPerSecond);
+        Assert.Equal(2048, options.CollectorOptions.ChannelCapacity);
+        Assert.Equal(250, options.CollectorOptions.BatchSize);
+        Assert.Equal(TimeSpan.FromSeconds(2), options.CollectorOptions.FlushInterval);
+        Assert.Equal(TimeSpan.FromMinutes(30), options.CollectorOptions.CheckpointInterval);
+        Assert.NotNull(options.SourceRegistration.BinanceOptions);
+        Assert.NotNull(options.SinkRegistration.S3Options);
+        Assert.Equal("quanta-candle-bucket-eu-north-1", options.SinkRegistration.S3Options.BucketName);
+        Assert.Equal("trade-data/", options.SinkRegistration.S3Options.Prefix);
     }
 
     [Fact]
@@ -44,8 +111,8 @@ public sealed class TradeRecorderCommandTests
     {
         var options = TradeRecorderCommand.Parse(
         [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
+            "BTCUSDT",
+            "--exchange", "stub",
         ]);
 
         Assert.NotNull(options.SinkRegistration.FileOptions);
@@ -54,25 +121,12 @@ public sealed class TradeRecorderCommandTests
     }
 
     [Fact]
-    public void ParsesCheckpointIntervalOption()
-    {
-        var options = TradeRecorderCommand.Parse(
-        [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
-            "--checkpointInterval", "15m",
-        ]);
-
-        Assert.Equal(TimeSpan.FromMinutes(15), options.CollectorOptions.CheckpointInterval);
-    }
-
-    [Fact]
     public void DefaultsCheckpointIntervalToOneHour()
     {
         var options = TradeRecorderCommand.Parse(
         [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
+            "BTCUSDT",
+            "--exchange", "stub",
         ]);
 
         Assert.Equal(TimeSpan.FromHours(1), options.CollectorOptions.CheckpointInterval);
@@ -83,8 +137,8 @@ public sealed class TradeRecorderCommandTests
     {
         var options = TradeRecorderCommand.Parse(
         [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
+            "BTCUSDT",
+            "--exchange", "stub",
         ]);
 
         Assert.Equal(1024, options.CacheSize);
@@ -95,8 +149,8 @@ public sealed class TradeRecorderCommandTests
     {
         var options = TradeRecorderCommand.Parse(
         [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
+            "BTCUSDT",
+            "--exchange", "stub",
             "--cacheSize", "2048",
         ]);
 
@@ -108,8 +162,8 @@ public sealed class TradeRecorderCommandTests
     {
         var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(
         [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
+            "BTCUSDT",
+            "--exchange", "stub",
             "--cacheSize", "0",
         ]));
 
@@ -121,8 +175,8 @@ public sealed class TradeRecorderCommandTests
     {
         var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(
         [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
+            "BTCUSDT",
+            "--exchange", "stub",
             "--cacheSize", "-1",
         ]));
 
@@ -130,55 +184,33 @@ public sealed class TradeRecorderCommandTests
     }
 
     [Fact]
-    public void ParsesExplicitNullSinkOptions()
+    public void RejectsMissingPositionalInstrument()
     {
-        var options = TradeRecorderCommand.Parse(
-        [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
-            "--sink", "null",
-        ]);
+        var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(["--exchange", "binance"]));
 
-        Assert.Null(options.SinkRegistration.FileOptions);
-        Assert.Null(options.SinkRegistration.S3Options);
+        Assert.Contains("first positional argument", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ParsesS3RecorderOptionsWithDeterministicLocalRootAndCheckpointInterval()
+    public void RejectsMissingRequiredExchange()
     {
-        var options = TradeRecorderCommand.Parse(
-        [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
-            "--sink", "s3",
-            "--outDir", "local-trades",
-            "--s3Bucket", "bucket-name",
-        ]);
+        var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(["BTCUSDT", "--duration", "30s"]));
 
-        Assert.NotNull(options.SinkRegistration.S3Options);
-        Assert.Equal("local-trades", options.SinkRegistration.S3Options.LocalRootDirectory);
-        Assert.Equal(TimeSpan.FromHours(1), options.SinkRegistration.S3Options.CheckpointInterval);
-        Assert.Equal(TimeSpan.FromHours(1), options.CollectorOptions.CheckpointInterval);
+        Assert.Contains("The --exchange option is required.", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--instrument")]
+    [InlineData("--source")]
+    public void RejectsLegacyOptions(string optionName)
+    {
+        var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(["BTCUSDT", optionName, "value", "--exchange", "stub"]));
+
+        Assert.Contains($"Legacy option '{optionName}'", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RejectsMissingRequiredInstrumentWhenDurationIsOmitted()
-    {
-        var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(["--source", "binance"]));
-
-        Assert.Contains("The --instrument option is required.", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void RejectsMissingRequiredSourceWhenDurationIsProvided()
-    {
-        var exception = Assert.Throws<ArgumentException>(() => TradeRecorderCommand.Parse(["--instrument", "BTCUSDT", "--duration", "30s"]));
-
-        Assert.Contains("The --source option is required.", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void HelpMarksDurationAsOptionalAndDocumentsLongRunningMode()
+    public void HelpDocumentsPositionalInstrumentAndSinkAlias()
     {
         using var writer = new StringWriter();
 
@@ -186,11 +218,8 @@ public sealed class TradeRecorderCommandTests
 
         var help = writer.ToString();
 
-        Assert.Contains("[--duration 10m]", help, StringComparison.Ordinal);
-        Assert.Contains("[--checkpointInterval 1h]", help, StringComparison.Ordinal);
-        Assert.Contains("[--cacheSize 1024]", help, StringComparison.Ordinal);
-        Assert.Contains("[--sink file|s3|null]", help, StringComparison.Ordinal);
-        Assert.Contains("Default sink: file. Use --sink null to disable durable trade output intentionally.", help, StringComparison.Ordinal);
+        Assert.Contains("BTCUSDT --exchange Binance|-x Binance", help, StringComparison.Ordinal);
+        Assert.Contains("[--sink file|s3|null|-to file|s3|null]", help, StringComparison.Ordinal);
         Assert.Contains("Omit --duration to keep recording until the host or process is stopped.", help, StringComparison.Ordinal);
     }
 }

@@ -19,8 +19,8 @@ public sealed class TradeRecorderCompositionRootTests
         using var container = new Container();
         var options = TradeRecorderCommand.Parse(
         [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
+            "BTCUSDT",
+            "--exchange", "stub",
         ]);
 
         TradeRecorderCompositionRoot.Configure(container, options);
@@ -44,8 +44,8 @@ public sealed class TradeRecorderCompositionRootTests
         using var container = new Container();
         var options = TradeRecorderCommand.Parse(
         [
-            "--source", "stub",
-            "--instrument", "BTCUSDT",
+            "BTCUSDT",
+            "--exchange", "stub",
             "--sink", "null",
         ]);
 

@@ -14,19 +14,14 @@ public static class TradeRecorderCommand
     /// </summary>
     public static bool IsHelpRequest(string[] args)
     {
-        var isHelp = args.Length == 0;
+        var result = args.Length == 0;
 
-        if (!isHelp)
+        if (!result)
         {
-            isHelp = IsHelpArgument(args[0]);
+            result = IsHelpArgument(args[0]);
         }
 
-        if (!isHelp && args.Length > 1 && IsCollectCommand(args[0]))
-        {
-            isHelp = IsHelpArgument(args[1]);
-        }
-
-        return isHelp;
+        return result;
     }
 
     /// <summary>
@@ -36,10 +31,11 @@ public static class TradeRecorderCommand
     {
         ArgumentNullException.ThrowIfNull(args);
 
-        var optionArgs = RemoveCommandName(args);
-        var options = ParseOptions(optionArgs);
+        ValidateArguments(args);
 
-        var source = GetRequiredStringOption(options, "source");
+        var instrument = ParseInstrument(args[0]);
+        var options = ParseOptions(args.Skip(1));
+        var exchange = GetRequiredExchangeOption(options);
         var sink = GetStringOption(options, "sink", "file");
         var s3Bucket = GetStringOptionOrEnvironment(options, "s3Bucket", "QUANTA_CANDLE_S3_BUCKET", "QUANTA_S3_BUCKET", "S3_BUCKET");
 
@@ -58,7 +54,7 @@ public static class TradeRecorderCommand
         var outputDir = GetStringOption(options, "outDir", "trades-out");
         var s3Prefix = GetStringOptionOrEnvironment(options, "s3Prefix", "QUANTA_CANDLE_S3_PREFIX", "QUANTA_S3_PREFIX", "S3_PREFIX");
         var binanceWsBase = GetStringOption(options, "binanceWsBase", BinanceTradeSourceOptions.Default.BaseWebSocketUrl);
-        var instruments = GetInstruments(options);
+        var instruments = new List<Instrument>(1) { instrument };
         var collectorOptions = new CollectorOptions(
             Instruments: instruments,
             ChannelCapacity: capacity,
@@ -73,7 +69,7 @@ public static class TradeRecorderCommand
             cacheSize,
             collectorOptions,
             retryOptions,
-            CreateTradeSourceRegistration(source, binanceWsBase, tradesPerSecond),
+            CreateTradeSourceRegistration(exchange, binanceWsBase, tradesPerSecond),
             CreateTradeSinkRegistration(sink, outputDir, s3Bucket, s3Prefix));
 
         return runOptions;
@@ -89,46 +85,38 @@ public static class TradeRecorderCommand
         writer.WriteLine("QuantaCandle.TradeRecorder");
         writer.WriteLine();
         writer.WriteLine("Usage:");
-        writer.WriteLine("  --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--cacheSize 1024] [--sink file|s3|null] [--outDir trades-out]");
-        writer.WriteLine("  collect-trades --source stub|binance --instrument BTCUSDT [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--cacheSize 1024] [--sink file|s3|null] [--outDir trades-out]");
+        writer.WriteLine("  BTCUSDT --exchange Binance|-x Binance [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--cacheSize 1024] [--sink file|s3|null|-to file|s3|null] [--outDir trades-out]");
         writer.WriteLine("    Omit --duration to keep recording until the host or process is stopped.");
         writer.WriteLine("    Default sink: file. Use --sink null to disable durable trade output intentionally.");
         writer.WriteLine("    S3 sink options: --s3Bucket my-bucket [--s3Prefix trades/raw] (env: QUANTA_CANDLE_S3_BUCKET, QUANTA_CANDLE_S3_PREFIX)");
         writer.WriteLine("    Binance options: [--binanceWsBase wss://stream.binance.com:9443] (try wss://stream.binance.us:9443 in the US)");
     }
 
-    private static string[] RemoveCommandName(string[] args)
+    private static bool IsHelpArgument(string value)
     {
-        var result = args;
+        var result = value.Equals("--help", StringComparison.OrdinalIgnoreCase);
 
-        if (args.Length > 0 && IsCollectCommand(args[0]))
+        if (!result)
         {
-            result = args[1..];
+            result = value.Equals("-h", StringComparison.OrdinalIgnoreCase);
         }
 
         return result;
     }
 
-    private static bool IsCollectCommand(string value) => value.Equals("collect-trades", StringComparison.OrdinalIgnoreCase)
-            || value.Equals("collect", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsHelpArgument(string value)
+    private static void ValidateArguments(string[] args)
     {
-        var isHelpArgument = value.Equals("--help", StringComparison.OrdinalIgnoreCase);
-
-        if (!isHelpArgument)
+        if (args.Length == 0 || IsNamedOptionToken(args[0]))
         {
-            isHelpArgument = value.Equals("-h", StringComparison.OrdinalIgnoreCase);
+            throw new ArgumentException("The instrument argument is required and must be the first positional argument.");
         }
-
-        return isHelpArgument;
     }
 
-    private static TradeRecorderSourceRegistration CreateTradeSourceRegistration(string source, string binanceWsBase, int tradesPerSecond)
+    private static TradeRecorderSourceRegistration CreateTradeSourceRegistration(string exchange, string binanceWsBase, int tradesPerSecond)
     {
         TradeRecorderSourceRegistration registration;
 
-        if (source.Equals("binance", StringComparison.OrdinalIgnoreCase))
+        if (exchange.Equals("Binance", StringComparison.Ordinal))
         {
             registration = new TradeRecorderSourceRegistration(
                 new BinanceTradeSourceOptions(
@@ -168,50 +156,29 @@ public static class TradeRecorderCommand
         return registration;
     }
 
-    private static List<Instrument> GetInstruments(IReadOnlyDictionary<string, string> options)
-    {
-        var raw = GetStringOption(options, "instrument", string.Empty);
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            raw = GetStringOption(options, "instruments", string.Empty);
-        }
-
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            throw new ArgumentException("The --instrument option is required.");
-        }
-
-        var parts = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        var instruments = new List<Instrument>(parts.Length);
-
-        foreach (var part in parts)
-        {
-            instruments.Add(ParseInstrument(part));
-        }
-
-        return instruments;
-    }
-
     private static Dictionary<string, string> ParseOptions(IEnumerable<string> args)
     {
-        var options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        string? pendingKey = null;
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        using var enumerator = args.GetEnumerator();
 
-        foreach (var arg in args)
+        while (enumerator.MoveNext())
         {
-            if (arg.StartsWith("--", StringComparison.Ordinal))
+            var token = enumerator.Current;
+            if (!IsNamedOptionToken(token))
             {
-                pendingKey = arg.Substring(2);
-                options[pendingKey] = "true";
+                throw new ArgumentException($"Unexpected argument '{token}'. The instrument must be the first positional argument and all remaining values must use named options.");
             }
-            else if (pendingKey is not null)
+
+            var optionName = NormalizeOptionName(token);
+            if (!enumerator.MoveNext() || IsNamedOptionToken(enumerator.Current))
             {
-                options[pendingKey] = arg;
-                pendingKey = null;
+                throw new ArgumentException($"Option '{token}' requires a value.");
             }
+
+            result[optionName] = enumerator.Current;
         }
 
-        return options;
+        return result;
     }
 
     private static int GetIntOption(IReadOnlyDictionary<string, string> options, string name, int defaultValue)
@@ -274,9 +241,11 @@ public static class TradeRecorderCommand
 
     private static Instrument ParseInstrument(string raw)
     {
+        Instrument result;
+
         try
         {
-            return Instrument.Parse(raw);
+            result = Instrument.Parse(raw);
         }
         catch
         {
@@ -292,12 +261,15 @@ public static class TradeRecorderCommand
                 if (normalized.EndsWith(quote, StringComparison.Ordinal))
                 {
                     var baseSymbol = normalized.Substring(0, normalized.Length - quote.Length);
-                    return Instrument.Parse($"{baseSymbol}-{quote}");
+                    result = Instrument.Parse($"{baseSymbol}-{quote}");
+                    return result;
                 }
             }
 
             throw;
         }
+
+        return result;
     }
 
     private static TimeSpan ParseDuration(string raw, TimeSpan defaultValue)
@@ -346,12 +318,15 @@ public static class TradeRecorderCommand
 
     private static string GetRequiredStringOption(IReadOnlyDictionary<string, string> options, string name)
     {
+        string result;
+
         if (!options.TryGetValue(name, out var value) || string.IsNullOrWhiteSpace(value))
         {
             throw new ArgumentException($"The --{name} option is required.");
         }
 
-        return value;
+        result = value;
+        return result;
     }
 
     private static string GetStringOptionOrEnvironment(IReadOnlyDictionary<string, string> options, string optionName, params string[] environmentVariableNames)
@@ -373,6 +348,76 @@ public static class TradeRecorderCommand
                     break;
                 }
             }
+        }
+
+        return result;
+    }
+
+    private static string GetRequiredExchangeOption(IReadOnlyDictionary<string, string> options)
+    {
+        var rawExchange = GetRequiredStringOption(options, "exchange");
+        var result = NormalizeExchange(rawExchange);
+
+        return result;
+    }
+
+    private static bool IsNamedOptionToken(string value)
+    {
+        var result = value.StartsWith("--", StringComparison.Ordinal);
+
+        if (!result && value.StartsWith("-", StringComparison.Ordinal) && value.Length > 1)
+        {
+            result = !char.IsDigit(value[1]);
+        }
+
+        return result;
+    }
+
+    private static string NormalizeExchange(string value)
+    {
+        string result;
+
+        if (value.Equals("binance", StringComparison.OrdinalIgnoreCase))
+        {
+            result = "Binance";
+        }
+        else if (value.Equals("stub", StringComparison.OrdinalIgnoreCase))
+        {
+            result = "Stub";
+        }
+        else
+        {
+            throw new ArgumentException($"Unknown exchange '{value}'. Supported exchanges: Binance, Stub.");
+        }
+
+        return result;
+    }
+
+    private static string NormalizeOptionName(string token)
+    {
+        string result;
+
+        if (token.Equals("--exchange", StringComparison.OrdinalIgnoreCase) || token.Equals("-x", StringComparison.OrdinalIgnoreCase))
+        {
+            result = "exchange";
+        }
+        else if (token.Equals("--sink", StringComparison.OrdinalIgnoreCase) || token.Equals("-to", StringComparison.OrdinalIgnoreCase))
+        {
+            result = "sink";
+        }
+        else if (token.Equals("--instrument", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("--source", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("--instruments", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"Legacy option '{token}' is not supported by QuantaCandle.TradeRecorder.");
+        }
+        else if (token.StartsWith("--", StringComparison.Ordinal))
+        {
+            result = token[2..];
+        }
+        else
+        {
+            throw new ArgumentException($"Unknown option '{token}'.");
         }
 
         return result;
