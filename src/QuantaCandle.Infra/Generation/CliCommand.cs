@@ -1,11 +1,9 @@
-using QuantaCandle.Core.Trading;
-
 namespace QuantaCandle.Infra.Generation;
 
 /// <summary>
 /// Parses the CLI command line into reusable executable options.
 /// </summary>
-public static class CandleGeneratorCommand
+public static class CliCommand
 {
     private static readonly string[] SupportedCommands =
     [
@@ -17,34 +15,24 @@ public static class CandleGeneratorCommand
     /// <summary>
     /// Determines whether the supplied arguments request help output.
     /// </summary>
-    public static bool IsHelpRequest(string[] args)
-    {
-        var result = false;
-
-        if (args.Length > 0)
-        {
-            result = IsHelpArgument(args[0]);
-        }
-
-        return result;
-    }
+    public static bool IsHelpRequest(string[] args) => args.Length == 0 || IsHelpArgument(args[0]);
 
     /// <summary>
     /// Parses CLI arguments and returns the runtime options needed by the executable.
     /// </summary>
-    public static CandleGeneratorRunOptions Parse(string[] args)
+    public static CliOptions Parse(string[] args)
     {
         ArgumentNullException.ThrowIfNull(args);
 
         ValidateArguments(args);
 
         var mode = ParseMode(args[0]);
-        var instrument = ParseInstrument(args[1]);
+        var instrument = args[1].ToUpper();
         var options = ParseOptions(args.Skip(2));
         var dates = GetDates(options);
         var exchange = GetStringOption(options, "exchange", "Binance");
         var workDirectory = GetStringOption(options, "workDir", Directory.GetCurrentDirectory());
-        var result = new CandleGeneratorRunOptions(mode, exchange, instrument.ToString(), workDirectory, dates);
+        var result = new CliOptions(mode, workDirectory, exchange, instrument.ToString(), string.Empty, dates);
 
         return result;
     }
@@ -56,7 +44,7 @@ public static class CandleGeneratorCommand
     {
         ArgumentNullException.ThrowIfNull(writer);
 
-        writer.WriteLine("QuantaCandle.CLI");
+        writer.WriteLine("Quanta Candle CLI");
         writer.WriteLine();
         writer.WriteLine("Usage:");
         writer.WriteLine("  qc candlize <instrument> [--workDir <path>|-dir <path>] [--exchange <name>|-x <name>] [--dates <yyyy-MM-dd|yyyyMMdd,...>|-on <yyyy-MM-dd|yyyyMMdd,...>]");
@@ -68,24 +56,15 @@ public static class CandleGeneratorCommand
         writer.WriteLine("  - <instrument> must use BASE-QUOTE format, for example BTC-USDT.");
         writer.WriteLine("  - --workDir defaults to the current directory.");
         writer.WriteLine("  - --exchange defaults to Binance.");
-        writer.WriteLine("  - Trade inputs are read from <workDir>\\trades-out\\<INSTRUMENT>\\yyyy-MM-dd.jsonl.");
+        writer.WriteLine("  - Trade inputs are read from <workDir>\\<exchange>\\<INSTRUMENT>\\yyyy-MM-dd.jsonl.");
         writer.WriteLine("  - Candle outputs are written to <workDir>\\candles-out\\<exchange>\\1m\\<INSTRUMENT>\\yyyy-MM-dd.csv.");
         writer.WriteLine("  - --dates and -on accept one date or a comma-separated list using yyyy-MM-dd or yyyyMMdd.");
         writer.WriteLine("  - scan reports gaps without modifying files.");
         writer.WriteLine("  - heal scans the requested instrument scope and heals each bounded gap it finds.");
     }
 
-    private static bool IsHelpArgument(string value)
-    {
-        var result = value.Equals("--help", StringComparison.OrdinalIgnoreCase);
-
-        if (!result)
-        {
-            result = value.Equals("-h", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return result;
-    }
+    private static bool IsHelpArgument(string value) => value.Equals("--help", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("-h", StringComparison.OrdinalIgnoreCase);
 
     private static void ValidateArguments(string[] args)
     {
@@ -100,41 +79,13 @@ public static class CandleGeneratorCommand
         }
     }
 
-    private static CandleGeneratorMode ParseMode(string value)
+    private static CliMode ParseMode(string value)
     {
-        CandleGeneratorMode result;
+        Enum.TryParse<CliMode>(value, true, out var result);
 
-        if (value.Equals("candlize", StringComparison.OrdinalIgnoreCase))
-        {
-            result = CandleGeneratorMode.Candlize;
-        }
-        else if (value.Equals("scan", StringComparison.OrdinalIgnoreCase))
-        {
-            result = CandleGeneratorMode.Scan;
-        }
-        else if (value.Equals("heal", StringComparison.OrdinalIgnoreCase))
-        {
-            result = CandleGeneratorMode.Heal;
-        }
-        else
+        if (result == CliMode.Unknown)
         {
             throw new ArgumentException($"Unknown command '{value}'. Supported commands: {string.Join(", ", SupportedCommands)}.");
-        }
-
-        return result;
-    }
-
-    private static Instrument ParseInstrument(string value)
-    {
-        Instrument result;
-
-        try
-        {
-            result = Instrument.Parse(value);
-        }
-        catch (ArgumentException ex)
-        {
-            throw new ArgumentException($"Invalid instrument '{value}'. {ex.Message}", ex);
         }
 
         return result;
@@ -165,7 +116,7 @@ public static class CandleGeneratorCommand
         return result;
     }
 
-    private static IReadOnlyList<DateOnly> GetDates(IReadOnlyDictionary<string, string> options)
+    private static DateOnly[] GetDates(IReadOnlyDictionary<string, string> options)
     {
         var result = Array.Empty<DateOnly>();
 
@@ -195,23 +146,14 @@ public static class CandleGeneratorCommand
         return result;
     }
 
-    private static string GetStringOption(IReadOnlyDictionary<string, string> options, string name, string defaultValue)
+    private static string GetStringOption(Dictionary<string, string> options, string name, string defaultValue)
     {
-        var result = defaultValue;
+        options.TryGetValue(name, out var value);
 
-        if (options.TryGetValue(name, out var value))
-        {
-            result = value;
-        }
-
-        return result;
+        return value ?? defaultValue;
     }
 
-    private static bool IsOptionToken(string value)
-    {
-        var result = value.StartsWith("-", StringComparison.Ordinal);
-        return result;
-    }
+    private static bool IsOptionToken(string value) => value.StartsWith("-", StringComparison.Ordinal);
 
     private static string NormalizeOptionName(string token)
     {
@@ -236,7 +178,7 @@ public static class CandleGeneratorCommand
             || token.Equals("--inDir", StringComparison.OrdinalIgnoreCase)
             || token.Equals("--outDir", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ArgumentException($"Legacy option '{token}' is not supported by QuantaCandle.CLI.");
+            throw new ArgumentException($"Legacy option '{token}' is not supported.");
         }
         else
         {

@@ -23,8 +23,8 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("binance", "BTC-USDT", "3", "2026-03-12T12:01:10Z", 99m, 0.3m));
 
             var generator = new TradeToCandleGenerator();
-            var result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", []),
+            var result = await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", []),
                 CancellationToken.None);
 
             Assert.Equal(2, result.CandleCount);
@@ -59,7 +59,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task SupportsEplicitCsvOutput()
+    public async Task SupportsExplicitCsvOutput()
     {
         var root = CreateTempRoot();
 
@@ -69,8 +69,8 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m));
 
             var generator = new TradeToCandleGenerator();
-            await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", [], "csv"),
+            await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"),
                 CancellationToken.None);
 
             var csvPath = Path.Combine(root, "candles-out", "binance", "1m", "BTC-USDT", "2026-03-12.csv");
@@ -94,8 +94,8 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m));
 
             var generator = new TradeToCandleGenerator();
-            await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", [], "jsonl"),
+            await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "jsonl"),
                 CancellationToken.None);
 
             var jsonlPath = Path.Combine(root, "candles-out", "binance", "1m", "BTC-USDT", "2026-03-12.jsonl");
@@ -130,8 +130,8 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("binance", "BTC-USDT", "2", "2026-03-12T00:02:15Z", 102m, 0.5m));
 
             var generator = new TradeToCandleGenerator();
-            await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", [], "csv"),
+            await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"),
                 CancellationToken.None);
 
             var csvPath = Path.Combine(root, "candles-out", "binance", "1m", "BTC-USDT", "2026-03-12.csv");
@@ -178,8 +178,8 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("binance", "BTC-USDT", "3", "2026-03-12T12:01:10Z", 99m, 0.3m));
 
             var generator = new TradeToCandleGenerator();
-            await generator.GenerateAsync(new TradeToCandleGeneratorOptions(rootA, "binance", "BTC-USDT", "1m", []), CancellationToken.None);
-            await generator.GenerateAsync(new TradeToCandleGeneratorOptions(rootB, "binance", "BTC-USDT", "1m", []), CancellationToken.None);
+            await generator.Run(new CliOptions(CliMode.Candlize, rootA, "binance", "BTC-USDT", "1m", []), CancellationToken.None);
+            await generator.Run(new CliOptions(CliMode.Candlize, rootB, "binance", "BTC-USDT", "1m", []), CancellationToken.None);
 
             var snapshotA = await SnapshotOutputAsync(rootA, "*.csv");
             var snapshotB = await SnapshotOutputAsync(rootB, "*.csv");
@@ -204,8 +204,8 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("binance", "BTC-USDT", "2", "2026-03-12T12:00:40Z", 101m, 0.25m));
 
             var generator = new TradeToCandleGenerator();
-            var result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", []),
+            var result = await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", []),
                 CancellationToken.None);
 
             Assert.Equal(3, result.InputTradeCount);
@@ -236,8 +236,8 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("binance", "ETH-USDT", "1", "2026-03-30T12:00:05Z", 200m, 2m));
 
             var generator = new TradeToCandleGenerator();
-            var result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", []),
+            var result = await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", []),
                 CancellationToken.None);
 
             Assert.Equal(1, result.InputTradeCount);
@@ -265,8 +265,9 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("binance", "BTC-USDT", "3", "2026-04-02T12:00:05Z", 102m, 1m));
 
             var generator = new TradeToCandleGenerator();
-            var result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(
+            var result = await generator.Run(
+                new CliOptions(
+                    CliMode.Candlize,
                     root,
                     "binance",
                     "BTC-USDT",
@@ -306,8 +307,8 @@ public sealed class TradeToCandleGeneratorTests
             await File.WriteAllTextAsync(unrelatedDatePath, "keep-date" + Environment.NewLine, CancellationToken.None);
 
             var generator = new TradeToCandleGenerator();
-            await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", [new DateOnly(2026, 3, 30)]),
+            await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [new DateOnly(2026, 3, 30)]),
                 CancellationToken.None);
 
             Assert.Equal("keep-eth" + Environment.NewLine, await File.ReadAllTextAsync(unrelatedInstrumentPath, CancellationToken.None));
@@ -333,8 +334,8 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("stub", "BTC-USDT", "1", "2026-03-30T12:00:05Z", 500m, 5m));
 
             var generator = new TradeToCandleGenerator();
-            var result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "stub", "BTC-USDT", "1m", []),
+            var result = await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "stub", "BTC-USDT", "1m", []),
                 CancellationToken.None);
 
             Assert.Equal(1, result.InputTradeCount);
@@ -361,8 +362,8 @@ public sealed class TradeToCandleGeneratorTests
                 Trade("stub", "BTC-USDT", "1", "2026-03-30T12:00:05Z", 500m, 5m));
 
             var generator = new TradeToCandleGenerator();
-            var result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", [new DateOnly(2026, 3, 30)]),
+            var result = await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [new DateOnly(2026, 3, 30)]),
                 CancellationToken.None);
 
             Assert.Equal(1, result.InputTradeCount);

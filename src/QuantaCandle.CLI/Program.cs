@@ -21,7 +21,7 @@ static async Task<int> Run(string[] args)
             container.GetInstance<ITradeGapFetchClient>(),
             container.GetInstance<ILogMachina<LocalFileTradeGapHealer>>()));
 
-    var app = new CandleGeneratorApplication(
+    var app = new CliApplication(
         new TradeToCandleGenerationRunner(),
         new LocalFileTradeGapScanner(),
         container.GetInstance<ITradeGapHealer>());

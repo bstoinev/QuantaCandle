@@ -11,7 +11,7 @@ public sealed class TradeToCandleGenerator
     /// <summary>
     /// Generates candles for the requested exchange, instrument, and optional date scope.
     /// </summary>
-    public async Task<CandleGenerationResult> GenerateAsync(TradeToCandleGeneratorOptions options, CancellationToken cancellationToken)
+    public async Task<CliResult> Run(CliOptions options, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -37,7 +37,7 @@ public sealed class TradeToCandleGenerator
 
         if (uniqueTrades.Count == 0)
         {
-            var emptyResult = new CandleGenerationResult(
+            var emptyResult = new CliResult(
                 InputTradeCount: inputTradeCount,
                 UniqueTradeCount: 0,
                 DuplicatesDropped: duplicatesDropped,
@@ -70,7 +70,7 @@ public sealed class TradeToCandleGenerator
             await File.WriteAllTextAsync(outputPath, payload, cancellationToken).ConfigureAwait(false);
         }
 
-        var result = new CandleGenerationResult(
+        var result = new CliResult(
             InputTradeCount: inputTradeCount,
             UniqueTradeCount: uniqueTrades.Count,
             DuplicatesDropped: duplicatesDropped,

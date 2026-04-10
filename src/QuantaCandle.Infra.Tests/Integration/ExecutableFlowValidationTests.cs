@@ -37,8 +37,8 @@ public sealed class ExecutableFlowValidationTests
             MoveTradesIntoExchangeDirectory(tradeFiles, tradeDirectory, "binance");
 
             var generator = new TradeToCandleGenerator();
-            var result = await generator.GenerateAsync(
-                new TradeToCandleGeneratorOptions(root, "binance", "BTC-USDT", "1m", [], "csv"),
+            var result = await generator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"),
                 CancellationToken.None);
 
             Assert.True(result.InputTradeCount > 0);

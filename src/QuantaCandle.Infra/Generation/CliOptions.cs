@@ -3,7 +3,8 @@ namespace QuantaCandle.Infra.Generation;
 /// <summary>
 /// Describes one in-place candle generation request scoped by work directory, exchange, instrument, and optional trading dates.
 /// </summary>
-public sealed record TradeToCandleGeneratorOptions(
+public sealed record CliOptions(
+    CliMode Mode,
     string WorkDirectory,
     string Exchange,
     string Instrument,

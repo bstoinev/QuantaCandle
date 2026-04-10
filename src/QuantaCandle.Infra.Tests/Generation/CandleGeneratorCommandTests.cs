@@ -10,7 +10,7 @@ public sealed class CandleGeneratorCommandTests
     [Fact]
     public void ParsesCandlizeCommandWithReadableOptions()
     {
-        var options = CandleGeneratorCommand.Parse(
+        var options = CliCommand.Parse(
         [
             "candlize",
             "btc-usdt",
@@ -19,7 +19,7 @@ public sealed class CandleGeneratorCommandTests
             "--dates", "20260330,20260401",
         ]);
 
-        Assert.Equal(CandleGeneratorMode.Candlize, options.Mode);
+        Assert.Equal(CliMode.Candlize, options.Mode);
         Assert.Equal("Binance", options.Exchange);
         Assert.Equal("BTC-USDT", options.Instrument);
         Assert.Equal("W:\\QuantaCandle", options.WorkDirectory);
@@ -29,9 +29,9 @@ public sealed class CandleGeneratorCommandTests
     [Fact]
     public void DefaultsExchangeAndWorkDirectoryWhenOptionsAreOmitted()
     {
-        var options = CandleGeneratorCommand.Parse(["scan", "btc-usdt"]);
+        var options = CliCommand.Parse(["scan", "btc-usdt"]);
 
-        Assert.Equal(CandleGeneratorMode.Scan, options.Mode);
+        Assert.Equal(CliMode.Scan, options.Mode);
         Assert.Equal("Binance", options.Exchange);
         Assert.Equal(Directory.GetCurrentDirectory(), options.WorkDirectory);
         Assert.Equal("BTC-USDT", options.Instrument);
@@ -41,9 +41,9 @@ public sealed class CandleGeneratorCommandTests
     [Fact]
     public void ParsesAliasOptions()
     {
-        var options = CandleGeneratorCommand.Parse(["heal", "btc-usdt", "-on", "20260328", "-x", "Binance", "-dir", "W:\\QuantaCandle"]);
+        var options = CliCommand.Parse(["heal", "btc-usdt", "-on", "20260328", "-x", "Binance", "-dir", "W:\\QuantaCandle"]);
 
-        Assert.Equal(CandleGeneratorMode.Heal, options.Mode);
+        Assert.Equal(CliMode.Heal, options.Mode);
         Assert.Equal("Binance", options.Exchange);
         Assert.Equal("W:\\QuantaCandle", options.WorkDirectory);
         Assert.Equal([new DateOnly(2026, 3, 28)], options.Dates);
@@ -52,7 +52,7 @@ public sealed class CandleGeneratorCommandTests
     [Fact]
     public void RejectsMissingCommand()
     {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse([]));
+        var exception = Assert.Throws<ArgumentException>(() => CliCommand.Parse([]));
 
         Assert.Contains("command argument is required", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -60,7 +60,7 @@ public sealed class CandleGeneratorCommandTests
     [Fact]
     public void RejectsUnknownCommand()
     {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["generate-candles", "btc-usdt"]));
+        var exception = Assert.Throws<ArgumentException>(() => CliCommand.Parse(["generate-candles", "btc-usdt"]));
 
         Assert.Contains("Unknown command 'generate-candles'", exception.Message, StringComparison.Ordinal);
     }
@@ -68,7 +68,7 @@ public sealed class CandleGeneratorCommandTests
     [Fact]
     public void RejectsLegacyCommandAlias()
     {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal-gaps", "btc-usdt"]));
+        var exception = Assert.Throws<ArgumentException>(() => CliCommand.Parse(["heal-gaps", "btc-usdt"]));
 
         Assert.Contains("Unknown command 'heal-gaps'", exception.Message, StringComparison.Ordinal);
     }
@@ -76,7 +76,7 @@ public sealed class CandleGeneratorCommandTests
     [Fact]
     public void RejectsMissingInstrument()
     {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal"]));
+        var exception = Assert.Throws<ArgumentException>(() => CliCommand.Parse(["heal"]));
 
         Assert.Contains("instrument argument is required", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -84,7 +84,7 @@ public sealed class CandleGeneratorCommandTests
     [Fact]
     public void RejectsMissingOptionValue()
     {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal", "btc-usdt", "--dates"]));
+        var exception = Assert.Throws<ArgumentException>(() => CliCommand.Parse(["heal", "btc-usdt", "--dates"]));
 
         Assert.Contains("Option '--dates' requires a value.", exception.Message, StringComparison.Ordinal);
     }
@@ -98,7 +98,7 @@ public sealed class CandleGeneratorCommandTests
     [InlineData("--instrument")]
     public void RejectsLegacyOptions(string option)
     {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal", "btc-usdt", option, "value"]));
+        var exception = Assert.Throws<ArgumentException>(() => CliCommand.Parse(["heal", "btc-usdt", option, "value"]));
 
         Assert.Contains($"Legacy option '{option}'", exception.Message, StringComparison.Ordinal);
     }
@@ -106,7 +106,7 @@ public sealed class CandleGeneratorCommandTests
     [Fact]
     public void RejectsInvalidDateFormat()
     {
-        var exception = Assert.Throws<ArgumentException>(() => CandleGeneratorCommand.Parse(["heal", "btc-usdt", "--dates", "2026/03/12"]));
+        var exception = Assert.Throws<ArgumentException>(() => CliCommand.Parse(["heal", "btc-usdt", "--dates", "2026/03/12"]));
 
         Assert.Contains("yyyy-MM-dd", exception.Message, StringComparison.Ordinal);
     }

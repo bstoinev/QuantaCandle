@@ -8,5 +8,5 @@ public interface ICandleGenerationRunner
     /// <summary>
     /// Generates candles from local trade files according to the supplied options.
     /// </summary>
-    Task<CandleGenerationResult> GenerateAsync(TradeToCandleGeneratorOptions options, CancellationToken cancellationToken);
+    Task<CliResult> GenerateAsync(CliOptions options, CancellationToken cancellationToken);
 }

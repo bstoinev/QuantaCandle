@@ -10,9 +10,9 @@ public sealed class TradeToCandleGenerationRunner : ICandleGenerationRunner
     /// <summary>
     /// Runs the candle generation pipeline.
     /// </summary>
-    public Task<CandleGenerationResult> GenerateAsync(TradeToCandleGeneratorOptions options, CancellationToken cancellationToken)
+    public Task<CliResult> GenerateAsync(CliOptions options, CancellationToken cancellationToken)
     {
-        var result = _generator.GenerateAsync(options, cancellationToken);
+        var result = _generator.Run(options, cancellationToken);
         return result;
     }
 }

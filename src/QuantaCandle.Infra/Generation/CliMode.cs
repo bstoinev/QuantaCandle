@@ -3,8 +3,10 @@ namespace QuantaCandle.Infra.Generation;
 /// <summary>
 /// Identifies the CLI command selected for the candle generator entrypoint.
 /// </summary>
-public enum CandleGeneratorMode
+public enum CliMode
 {
+    Unknown,
+
     /// <summary>
     /// Reads trade files and writes candle files.
     /// </summary>

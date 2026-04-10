@@ -5,11 +5,19 @@ namespace QuantaCandle.Infra.Generation;
 /// <summary>
 /// Dispatches the CLI entrypoint into candle generation, gap scanning, or gap healing modes.
 /// </summary>
-public sealed class CandleGeneratorApplication(
+public sealed class CliApplication(
     ICandleGenerationRunner candleGenerationRunner,
     ITradeGapScanner tradeGapScanner,
     ITradeGapHealer tradeGapHealer)
 {
+    /// <summary>
+    /// Represents candidate file resolution for an optionally date-scoped scan or heal request.
+    /// </summary>
+    private sealed record CandidateFileResolution(
+        IReadOnlyList<TradeGapAffectedFile> ResolvedFiles,
+        IReadOnlyList<DateOnly> MissingDates,
+        string ExpectedPathExample);
+
     private readonly ICandleGenerationRunner _candleGenerationRunner = candleGenerationRunner ?? throw new ArgumentNullException(nameof(candleGenerationRunner));
     private readonly ITradeGapScanner _tradeGapScanner = tradeGapScanner ?? throw new ArgumentNullException(nameof(tradeGapScanner));
     private readonly ITradeGapHealer _tradeGapHealer = tradeGapHealer ?? throw new ArgumentNullException(nameof(tradeGapHealer));
@@ -28,40 +36,40 @@ public sealed class CandleGeneratorApplication(
         ArgumentNullException.ThrowIfNull(errorWriter);
 
         var result = 0;
-        CandleGeneratorRunOptions runOptions;
+        CliOptions runOptions;
 
-        if (CandleGeneratorCommand.IsHelpRequest(args))
+        if (CliCommand.IsHelpRequest(args))
         {
-            CandleGeneratorCommand.WriteHelp(outputWriter);
+            CliCommand.WriteHelp(outputWriter);
         }
         else
         {
             try
             {
-                runOptions = CandleGeneratorCommand.Parse(args);
+                runOptions = CliCommand.Parse(args);
             }
             catch (ArgumentException ex)
             {
                 await errorWriter.WriteLineAsync(ex.Message).ConfigureAwait(false);
                 result = 2;
-                runOptions = new CandleGeneratorRunOptions(CandleGeneratorMode.Candlize, string.Empty, string.Empty, string.Empty, []);
+                runOptions = new CliOptions(CliMode.Unknown, string.Empty, string.Empty, string.Empty, string.Empty, []);
             }
 
             if (result == 0)
             {
                 try
                 {
-                    if (runOptions.Mode == CandleGeneratorMode.Scan)
+                    if (runOptions.Mode is CliMode.Scan)
                     {
-                        result = await RunScanAsync(runOptions, outputWriter, cancellationToken).ConfigureAwait(false);
+                        result = await RunScan(runOptions, outputWriter, cancellationToken).ConfigureAwait(false);
                     }
-                    else if (runOptions.Mode == CandleGeneratorMode.Heal)
+                    else if (runOptions.Mode is CliMode.Heal)
                     {
-                        result = await RunHealAsync(runOptions, outputWriter, cancellationToken).ConfigureAwait(false);
+                        result = await RunHeal(runOptions, outputWriter, cancellationToken).ConfigureAwait(false);
                     }
                     else
                     {
-                        result = await RunCandlizeAsync(runOptions, outputWriter, cancellationToken).ConfigureAwait(false);
+                        result = await RunCandlize(runOptions, outputWriter, cancellationToken).ConfigureAwait(false);
                     }
                 }
                 catch (NotSupportedException ex)
@@ -88,12 +96,13 @@ public sealed class CandleGeneratorApplication(
     /// <summary>
     /// Runs candle generation and writes the current summary output.
     /// </summary>
-    private async Task<int> RunCandlizeAsync(
-        CandleGeneratorRunOptions runOptions,
+    private async Task<int> RunCandlize(
+        CliOptions runOptions,
         TextWriter outputWriter,
         CancellationToken cancellationToken)
     {
-        var generatorOptions = new TradeToCandleGeneratorOptions(
+        var generatorOptions = new CliOptions(
+            runOptions.Mode,
             runOptions.WorkDirectory,
             runOptions.Exchange,
             runOptions.Instrument,
@@ -114,15 +123,16 @@ public sealed class CandleGeneratorApplication(
     /// <summary>
     /// Runs local gap scanning and writes a per-gap summary without treating gaps as failures.
     /// </summary>
-    private async Task<int> RunScanAsync(
-        CandleGeneratorRunOptions runOptions,
+    private async Task<int> RunScan(
+        CliOptions runOptions,
         TextWriter outputWriter,
         CancellationToken cancellationToken)
     {
         var tradeRootDirectory = GetTradeRootDirectory(runOptions);
-        var candidateFiles = ResolveCandidateFiles(tradeRootDirectory, runOptions.Instrument, runOptions.Dates);
+        var candidateFileResolution = ResolveCandidateFiles(tradeRootDirectory, runOptions.Exchange, runOptions.Instrument, runOptions.Dates);
+        EnsureRequestedDatesWereResolved(runOptions, tradeRootDirectory, candidateFileResolution);
         var scanResult = await _tradeGapScanner
-            .Scan(new TradeGapScanRequest(tradeRootDirectory, candidateFiles, []), cancellationToken)
+            .Scan(new TradeGapScanRequest(tradeRootDirectory, candidateFileResolution.ResolvedFiles, []), cancellationToken)
             .ConfigureAwait(false);
         var requestedExchange = new ExchangeId(runOptions.Exchange);
         var requestedInstrument = Instrument.Parse(runOptions.Instrument);
@@ -152,17 +162,18 @@ public sealed class CandleGeneratorApplication(
     /// <summary>
     /// Runs local gap healing by scanning first and then healing each bounded gap in the requested scope.
     /// </summary>
-    private async Task<int> RunHealAsync(
-        CandleGeneratorRunOptions runOptions,
+    private async Task<int> RunHeal(
+        CliOptions runOptions,
         TextWriter outputWriter,
         CancellationToken cancellationToken)
     {
         EnsureSupportedExchange(runOptions.Exchange);
 
         var tradeRootDirectory = GetTradeRootDirectory(runOptions);
-        var candidateFiles = ResolveCandidateFiles(tradeRootDirectory, runOptions.Instrument, runOptions.Dates);
+        var candidateFileResolution = ResolveCandidateFiles(tradeRootDirectory, runOptions.Exchange, runOptions.Instrument, runOptions.Dates);
+        EnsureRequestedDatesWereResolved(runOptions, tradeRootDirectory, candidateFileResolution);
         var scanResult = await _tradeGapScanner
-            .Scan(new TradeGapScanRequest(tradeRootDirectory, candidateFiles, []), cancellationToken)
+            .Scan(new TradeGapScanRequest(tradeRootDirectory, candidateFileResolution.ResolvedFiles, []), cancellationToken)
             .ConfigureAwait(false);
         var requestedExchange = new ExchangeId(runOptions.Exchange);
         var requestedInstrument = Instrument.Parse(runOptions.Instrument);
@@ -186,7 +197,7 @@ public sealed class CandleGeneratorApplication(
                         requestedInstrument,
                         gapWithRange.Gap.MissingTradeIds.Value.FirstTradeId,
                         gapWithRange.Gap.MissingTradeIds.Value.LastTradeId,
-                        candidateFiles,
+                        candidateFileResolution.ResolvedFiles,
                         gapWithRange.Range),
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -218,39 +229,76 @@ public sealed class CandleGeneratorApplication(
     /// <summary>
     /// Resolves requested dates into candidate files under the supplied trade root directory and instrument scope.
     /// </summary>
-    private static IReadOnlyList<TradeGapAffectedFile> ResolveCandidateFiles(string tradeRootDirectory, string instrument, IReadOnlyList<DateOnly> dates)
+    private static CandidateFileResolution ResolveCandidateFiles(
+        string tradeRootDirectory,
+        string exchange,
+        string instrument,
+        IReadOnlyList<DateOnly> dates)
     {
         var result = new List<TradeGapAffectedFile>();
-        var instrumentPath = Instrument.Parse(instrument).ToString();
-        var instrumentDirectory = Path.Combine(tradeRootDirectory, instrumentPath);
-
-        if (!Directory.Exists(instrumentDirectory))
-        {
-            return result;
-        }
+        var missingDates = new List<DateOnly>();
+        var exchangeId = new ExchangeId(exchange);
+        var parsedInstrument = Instrument.Parse(instrument);
+        var expectedPathExampleDate = dates.Count > 0
+            ? dates.OrderBy(static value => value).First()
+            : DateOnly.FromDateTime(DateTime.UtcNow);
+        var expectedPathExample = TradeLocalDailyFilePath.Build(tradeRootDirectory, exchangeId, parsedInstrument, expectedPathExampleDate);
 
         if (dates.Count > 0)
         {
             foreach (var date in dates.OrderBy(static value => value))
             {
-                var relativePath = Path.Combine(instrumentPath, date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) + ".jsonl");
-                var fullPath = Path.Combine(tradeRootDirectory, relativePath);
+                var fullPath = TradeLocalDailyFilePath.Build(tradeRootDirectory, exchangeId, parsedInstrument, date);
                 if (File.Exists(fullPath))
                 {
+                    var relativePath = Path.GetRelativePath(tradeRootDirectory, fullPath);
                     result.Add(new TradeGapAffectedFile(relativePath, date));
+                }
+                else
+                {
+                    missingDates.Add(date);
                 }
             }
         }
         else
         {
-            foreach (var fullPath in Directory.EnumerateFiles(instrumentDirectory, "*.jsonl", SearchOption.TopDirectoryOnly).OrderBy(static path => path, StringComparer.Ordinal))
+            foreach (var completedFile in TradeLocalDailyFilePath.DiscoverCompleted(tradeRootDirectory, exchangeId, parsedInstrument))
             {
-                var relativePath = Path.GetRelativePath(tradeRootDirectory, fullPath);
-                var tradingDay = DateOnly.ParseExact(Path.GetFileNameWithoutExtension(fullPath), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-                result.Add(new TradeGapAffectedFile(relativePath, tradingDay));
+                var relativePath = Path.GetRelativePath(tradeRootDirectory, completedFile.Path);
+                result.Add(new TradeGapAffectedFile(relativePath, completedFile.UtcDate));
             }
         }
 
+        var resolution = new CandidateFileResolution(result, missingDates, expectedPathExample);
+        return resolution;
+    }
+
+    /// <summary>
+    /// Throws when one or more explicitly requested trade dates do not resolve to local files.
+    /// </summary>
+    private static void EnsureRequestedDatesWereResolved(
+        CliOptions runOptions,
+        string tradeRootDirectory,
+        CandidateFileResolution candidateFileResolution)
+    {
+        if (runOptions.Dates.Count == 0 || candidateFileResolution.MissingDates.Count == 0)
+        {
+            return;
+        }
+
+        var requestedDates = string.Join(", ", runOptions.Dates.Select(static date => date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)));
+        var missingDates = string.Join(", ", candidateFileResolution.MissingDates.Select(static date => date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)));
+
+        throw new ArgumentException(
+            $"Requested trade file scope could not be resolved for exchange '{runOptions.Exchange}', instrument '{runOptions.Instrument}', requested date(s) [{requestedDates}], missing date(s) [{missingDates}], root directory '{tradeRootDirectory}'. Expected path example: '{candidateFileResolution.ExpectedPathExample}'.");
+    }
+
+    /// <summary>
+    /// Gets the configured trade root directory exactly as supplied by the caller.
+    /// </summary>
+    private static string GetTradeRootDirectory(CliOptions runOptions)
+    {
+        var result = Path.GetFullPath(runOptions.WorkDirectory);
         return result;
     }
 
@@ -276,12 +324,6 @@ public sealed class CandleGeneratorApplication(
             result.Add((gap, range));
         }
 
-        return result;
-    }
-
-    private static string GetTradeRootDirectory(CandleGeneratorRunOptions runOptions)
-    {
-        var result = Path.Combine(Path.GetFullPath(runOptions.WorkDirectory), "trades-out");
         return result;
     }
 
