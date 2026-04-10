@@ -1,4 +1,4 @@
-# QuantaCandle
+# Quanta Candle
 
 Deterministic, validation-first crypto OHLCV data collector built with .NET and Docker.
 
@@ -11,7 +11,7 @@ This is infrastructure.
 
 Public exchange exports and third-party datasets often contain gaps, inconsistencies, rounding issues, or silent data corruption.
 
-QuantaCandle aims to:
+Quanta Candle aims to:
 - Collect raw OHLCV candles directly from exchanges
 - Validate structural integrity (gaps, overlaps, ordering, duplicates)
 - Normalize and store clean datasets
@@ -47,48 +47,77 @@ See `GIT_HOOKS.md` for details, including GitHub Actions enforcement (recommende
 
 ## Executable usage
 
+### QuantaCandle.TradeRecorder
+
+Trade Recorder has no subcommands. The instrument is the first positional argument, the exchange is selected with `--exchange` or `-x`, and the sink is selected with `--sink` or `-to`.
+
 Record trades to a local directory and keep running until you stop the process:
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binance --instrument BTCUSDT --sink file --outDir trades-out
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --sink file --outDir trades-out
 ```
 
 Run a bounded local collection that exits on its own after 30 seconds:
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binance --instrument BTCUSDT --duration 30s --sink file --outDir trades-out
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --duration 30s --sink file --outDir trades-out
 ```
 
-Generate deterministic 1-minute candles from collected trades (CSV default):
+Record trades and dispatch finalized files to S3:
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode generate-candles --source binance --timeframe 1m --inDir trades-out --outDir candles-out
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --sink s3 --s3Bucket quanta-candle-bucket-eu-north-1 --s3Prefix trade-data/
 ```
 
-Generate candles as JSONL (optional):
+Use the sink alias and Binance US websocket endpoint for a local US smoke test:
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode generate-candles --source binance --timeframe 1m --format jsonl --inDir trades-out --outDir candles-out
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT -x Binance -to file --outDir trades-out --binanceWsBase wss://stream.binance.us:9443
+```
+
+Trade output layout:
+- Local finalized trades: `<outDir>\<EXCHANGE>\<INSTRUMENT>\<yyyy-MM-dd>.jsonl`
+- Local scratch checkpoint: `<outDir>\<EXCHANGE>\<INSTRUMENT>\qc-scratch.jsonl`
+
+### QuantaCandle.CLI
+
+The CLI executable is `qc`. It uses positional subcommands:
+- `qc candlize <instrument>`
+- `qc scan <instrument>`
+- `qc heal <instrument>`
+
+Generate deterministic 1-minute candles from collected trades (CSV output):
+
+```powershell
+dotnet run -c Release --project src\QuantaCandle.CLI -- candlize BTC-USDT --exchange Binance --workDir .
 ```
 
 Scan locally recorded trade files for numeric trade ID gaps without modifying any files:
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode scan-gaps --inDir trades-out
+dotnet run -c Release --project src\QuantaCandle.CLI -- scan BTC-USDT --exchange Binance --workDir .
 ```
 
-Scan a specific local dataset root and review the per-gap summary output:
+Scan a specific work directory and review the per-gap summary output:
 
 ```powershell
-$tradeDir = Join-Path (Get-Location) "tmp-e2e\trades"
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode scan-gaps --inDir $tradeDir
+$workDir = Join-Path (Get-Location) "tmp-e2e"
+dotnet run -c Release --project src\QuantaCandle.CLI -- scan BTC-USDT --exchange Binance --workDir $workDir
 ```
 
-Input format (trade files): `<inDir>/<INSTRUMENT>/<yyyy-MM-dd>.jsonl`
+Heal bounded trade ID gaps for a specific date:
 
-Default candle output format (CSV): `<outDir>/binance/1m/<INSTRUMENT>/<yyyy-MM-dd>.csv`
+```powershell
+dotnet run -c Release --project src\QuantaCandle.CLI -- heal BTC-USDT --exchange Binance --workDir . --dates 2026-03-28
+```
 
-JSONL candle output format (when `--format jsonl`): `<outDir>/binance/1m/<INSTRUMENT>/<yyyy-MM-dd>.jsonl`
+Trade input layout used by `qc`: `<workDir>\trades-out\<exchange>\<INSTRUMENT>\<yyyy-MM-dd>.jsonl`
+
+Default candle output format (CSV): `<workDir>\candles-out\<exchange>\1m\<INSTRUMENT>\<yyyy-MM-dd>.csv`
+
+Current output formats:
+- CSV is currently the default and only documented workflow for `qc`.
+- JSONL generation is not exposed by the current `qc` command surface.
 
 CSV header columns:
 - `OpenTimeUtc,Instrument,Open,High,Low,Close,Volume,TradeCount`
@@ -103,20 +132,18 @@ From the project root (PowerShell), run:
 
 ```powershell
 $root = Join-Path (Get-Location) "tmp-e2e"
-$tradeDir = Join-Path $root "trades"
-$candleDir = Join-Path $root "candles"
-New-Item -ItemType Directory -Force -Path $tradeDir,$candleDir | Out-Null
+$workDir = $root
+New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 
-dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --source binance --instrument BTCUSDT --sink file --outDir $tradeDir --binanceWsBase wss://stream.binance.us:9443
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --sink file --outDir (Join-Path $workDir "trades-out") --binanceWsBase wss://stream.binance.us:9443
 
 # Stop it manually after a short sample window, then generate candles from the recorded trades.
 
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode scan-gaps --inDir $tradeDir
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode generate-candles --source binance --timeframe 1m --inDir $tradeDir --outDir $candleDir
-dotnet run -c Release --project src\QuantaCandle.CandleGenerator -- --mode generate-candles --source binance --timeframe 1m --format jsonl --inDir $tradeDir --outDir $candleDir
+dotnet run -c Release --project src\QuantaCandle.CLI -- scan BTC-USDT --exchange Binance --workDir $workDir
+dotnet run -c Release --project src\QuantaCandle.CLI -- candlize BTC-USDT --exchange Binance --workDir $workDir
 
-Get-ChildItem -Recurse $candleDir -Filter *.csv | Sort-Object FullName
-$firstCandleFile = Get-ChildItem -Recurse (Join-Path $candleDir "binance\1m\BTC-USDT") -Filter *.csv | Sort-Object FullName | Select-Object -First 1
+Get-ChildItem -Recurse (Join-Path $workDir "candles-out") -Filter *.csv | Sort-Object FullName
+$firstCandleFile = Get-ChildItem -Recurse (Join-Path $workDir "candles-out\binance\1m\BTC-USDT") -Filter *.csv | Sort-Object FullName | Select-Object -First 1
 Get-Content $firstCandleFile.FullName | Select-Object -First 20
 ```
 
@@ -124,16 +151,15 @@ Use `wss://stream.binance.com:9443` instead of `wss://stream.binance.us:9443` if
 
 ## AWS Deployment (Manual Infra)
 
-Terraform is retired for this project. AWS infrastructure is managed manually in AWS.
-
 Runtime deployment flow:
 1. Push code to GitHub.
 2. GitHub Actions builds and pushes the container image to the existing ECR repository (`.github/workflows/container-ecr.yml`).
-3. In the AWS ECS web console, force a new deployment on the existing Quanta Candle TradeRecorder service when rollout is needed.
+3. In the AWS ECS web console, force a new deployment on the existing Trade Recorder service when rollout is needed.
 
-The TradeRecorder process is intended to run as a long-lived ECS Service. It keeps collecting until ECS stops or replaces the task, at which point the host shuts down gracefully and prints the final stats summary.
+The Trade Recorder process is intended to run as a long-lived ECS Service. It keeps collecting until ECS stops or replaces the task, at which point the host shuts down gracefully.
 
-The ECS runtime remains S3-based for trade collection output (`--sink s3` with bucket/prefix configured in the task definition/runtime settings). Use `--duration` only for explicitly bounded runs such as local smoke tests.
+The ECS runtime remains S3-based for trade collection output (`--sink s3` with bucket/prefix configured in the task definition/runtime settings).
+Use `--duration` only for explicitly bounded runs such as local smoke tests.
 
 ## CI: Build and publish to GHCR
 
@@ -150,16 +176,6 @@ GHCR settings:
 - `<owner-lowercase>` is the lowercase form of `github.repository_owner`.
 - Package visibility and pull access are managed in GitHub package settings (`Packages` -> `quantacandle`).
 - For public pulls, set the package visibility to public.
-
-## CI: Validation (no publish)
-
-Workflow: `.github/workflows/ci-workflow.yml`
-
-What it does:
-- Triggers on `push` and `pull_request`
-- Restores dependencies and builds `src/QuantaCandle.slnx` in `Release`
-- Runs tests in `Release` with `--no-build`
-- Builds the root Docker image with `docker build` (no push)
 
 ## License
 
