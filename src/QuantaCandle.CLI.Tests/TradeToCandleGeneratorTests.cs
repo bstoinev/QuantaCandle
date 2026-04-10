@@ -383,12 +383,12 @@ public sealed class TradeToCandleGeneratorTests
         var path = Path.Combine(directory, fileName);
         var lines = trades.Select(static trade => JsonSerializer.Serialize(trade)).ToArray();
         var payload = string.Join(Environment.NewLine, lines) + Environment.NewLine;
-        await File.WriteAllTextAsync(path, payload, CancellationToken.None);
+        await File.WriteAllTextAsync(path, payload, CancellationToken.None).ConfigureAwait(false);
     }
 
     private static async Task<string[][]> ReadCsvRowsAsync(string path)
     {
-        var lines = await File.ReadAllLinesAsync(path, CancellationToken.None);
+        var lines = await File.ReadAllLinesAsync(path, CancellationToken.None).ConfigureAwait(false);
         var result = lines
             .Where(static line => !string.IsNullOrWhiteSpace(line))
             .Select(static line => line.Split(','))
@@ -398,7 +398,7 @@ public sealed class TradeToCandleGeneratorTests
 
     private static async Task<JsonElement[]> ReadJsonlFileAsync(string path)
     {
-        var lines = await File.ReadAllLinesAsync(path, CancellationToken.None);
+        var lines = await File.ReadAllLinesAsync(path, CancellationToken.None).ConfigureAwait(false);
         var values = new List<JsonElement>(lines.Length);
 
         foreach (var line in lines)
@@ -420,7 +420,7 @@ public sealed class TradeToCandleGeneratorTests
         var root = Path.Combine(workDirectory, "candles-out", "binance", "1m");
         if (!Directory.Exists(root))
         {
-            return Array.Empty<string>();
+            return [];
         }
 
         var files = Directory.GetFiles(root, pattern, SearchOption.AllDirectories);
@@ -430,7 +430,7 @@ public sealed class TradeToCandleGeneratorTests
         foreach (var file in files)
         {
             var relativePath = Path.GetRelativePath(root, file).Replace('\\', '/');
-            var content = await File.ReadAllTextAsync(file, CancellationToken.None);
+            var content = await File.ReadAllTextAsync(file, CancellationToken.None).ConfigureAwait(false);
             snapshot.Add($"{relativePath}\n{content}");
         }
 

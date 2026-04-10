@@ -63,8 +63,8 @@ public sealed class ExecutableFlowValidationTests
     private static async Task CollectTradesAsync(string tradeDirectory)
     {
         var collectorOptions = new CollectorOptions(
-            new[] { Instrument.Parse("BTC-USDT") },
-            ChannelCapacity: 1_024,
+            ["BTC-USDT"],
+            ChannelCapacity: 1024,
             BatchSize: 1,
             FlushInterval: TimeSpan.FromMilliseconds(100),
             CheckpointInterval: TimeSpan.FromMilliseconds(100),
@@ -98,7 +98,7 @@ public sealed class ExecutableFlowValidationTests
 
         try
         {
-            await collectTask;
+            await collectTask.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -108,7 +108,7 @@ public sealed class ExecutableFlowValidationTests
             channel.Writer.TryComplete();
         }
 
-        await ingestTask;
+        await ingestTask.ConfigureAwait(false);
 
         Assert.True(stats.GetSnapshot().TradesWritten > 0);
     }
@@ -121,7 +121,7 @@ public sealed class ExecutableFlowValidationTests
     {
         await foreach (var trade in source.GetLiveTrades(instrument, cancellationToken).ConfigureAwait(false))
         {
-            await writer.WriteAsync(trade, cancellationToken);
+            await writer.WriteAsync(trade, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -129,7 +129,7 @@ public sealed class ExecutableFlowValidationTests
     {
         foreach (var file in files.OrderBy(path => path, StringComparer.Ordinal))
         {
-            var lines = await File.ReadAllLinesAsync(file, CancellationToken.None);
+            var lines = await File.ReadAllLinesAsync(file, CancellationToken.None).ConfigureAwait(false);
             var rewrittenLines = new List<string>(lines.Length);
 
             foreach (var line in lines)
@@ -162,7 +162,7 @@ public sealed class ExecutableFlowValidationTests
             }
 
             var payload = string.Join(Environment.NewLine, rewrittenLines) + Environment.NewLine;
-            await File.WriteAllTextAsync(file, payload, CancellationToken.None);
+            await File.WriteAllTextAsync(file, payload, CancellationToken.None).ConfigureAwait(false);
         }
     }
 

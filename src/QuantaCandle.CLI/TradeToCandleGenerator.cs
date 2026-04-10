@@ -126,7 +126,7 @@ public sealed class TradeToCandleGenerator
         return result;
     }
 
-    private static IReadOnlyList<string> ResolveInputFiles(string tradeRootDirectory, string exchange, string instrument, IReadOnlyList<DateOnly> dates)
+    private static List<string> ResolveInputFiles(string tradeRootDirectory, string exchange, string instrument, IReadOnlyList<DateOnly> dates)
     {
         var result = new List<string>();
         var instrumentDirectory = Path.Combine(tradeRootDirectory, exchange, instrument);

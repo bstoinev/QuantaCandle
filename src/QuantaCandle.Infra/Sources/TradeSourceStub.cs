@@ -1,31 +1,13 @@
-using System;
-using System.Collections.Generic;
 using System.Runtime.CompilerServices;
-using System.Threading;
-using System.Threading.Tasks;
+
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 
 namespace QuantaCandle.Infra;
 
-public sealed class TradeSourceStub : ITradeSource
+public sealed class TradeSourceStub(TradeSourceStubOptions options, IClock clock) : ITradeSource
 {
-    private readonly TradeSourceStubOptions options;
-    private readonly IClock clock;
-
-    public TradeSourceStub(TradeSourceStubOptions options, IClock clock)
-    {
-        this.options = options;
-        this.clock = clock;
-    }
-
-    public ExchangeId Exchange
-    {
-        get
-        {
-            return options.Exchange;
-        }
-    }
+    public ExchangeId Exchange => options.Exchange;
 
     public async IAsyncEnumerable<TradeInfo> GetLiveTrades(
         Instrument symbol,

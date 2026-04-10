@@ -3,7 +3,7 @@ namespace QuantaCandle.CLI.Tests;
 /// <summary>
 /// Verifies the positional command surface exposed by the CLI executable.
 /// </summary>
-public sealed class CandleGeneratorCommandTests
+public sealed class CliCommandTests
 {
     [Fact]
     public void ParsesCandlizeCommandWithReadableOptions()

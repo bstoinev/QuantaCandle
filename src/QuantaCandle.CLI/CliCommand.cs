@@ -116,7 +116,7 @@ public static class CliCommand
         return result;
     }
 
-    private static DateOnly[] GetDates(IReadOnlyDictionary<string, string> options)
+    private static DateOnly[] GetDates(Dictionary<string, string> options)
     {
         var result = Array.Empty<DateOnly>();
 
@@ -135,9 +135,8 @@ public static class CliCommand
 
     private static DateOnly ParseDate(string value)
     {
-        DateOnly result;
 
-        if (!DateOnly.TryParseExact(value, "yyyy-MM-dd", out result)
+        if (!DateOnly.TryParseExact(value, "yyyy-MM-dd", out var result)
             && !DateOnly.TryParseExact(value, "yyyyMMdd", out result))
         {
             throw new ArgumentException($"Invalid date '{value}'. Accepted formats are yyyy-MM-dd and yyyyMMdd.");
@@ -153,7 +152,7 @@ public static class CliCommand
         return value ?? defaultValue;
     }
 
-    private static bool IsOptionToken(string value) => value.StartsWith("-", StringComparison.Ordinal);
+    private static bool IsOptionToken(string value) => value.StartsWith('-');
 
     private static string NormalizeOptionName(string token)
     {
