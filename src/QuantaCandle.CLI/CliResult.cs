@@ -1,4 +1,4 @@
-namespace QuantaCandle.Infra.Generation;
+namespace QuantaCandle.CLI;
 
 public sealed record CliResult(
     int InputTradeCount,

@@ -1,4 +1,5 @@
 <Solution>
+    <Project Path="QuantaCandle.CLI.Tests/QuantaCandle.CLI.Tests.csproj" Id="2a3345ec-004b-4241-ac22-67098f93f260" />
     <Project Path="QuantaCandle.CLI/QuantaCandle.CLI.csproj" />
     <Project Path="QuantaCandle.Core/QuantaCandle.Core.csproj" />
     <Project Path="QuantaCandle.Exchange.Binance/QuantaCandle.Exchange.Binance.csproj" />

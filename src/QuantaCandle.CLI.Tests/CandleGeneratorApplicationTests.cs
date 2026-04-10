@@ -1,9 +1,9 @@
 using Moq;
 
 using QuantaCandle.Core.Trading;
-using QuantaCandle.Infra.Generation;
+using QuantaCandle.Infra;
 
-namespace QuantaCandle.Infra.Tests.Generation;
+namespace QuantaCandle.CLI.Tests;
 
 /// <summary>
 /// Verifies command dispatch for the CLI workflow.

@@ -1,6 +1,7 @@
 using QuantaCandle.Core.Trading;
+using QuantaCandle.Infra;
 
-namespace QuantaCandle.Infra.Generation;
+namespace QuantaCandle.CLI;
 
 /// <summary>
 /// Dispatches the CLI entrypoint into candle generation, gap scanning, or gap healing modes.

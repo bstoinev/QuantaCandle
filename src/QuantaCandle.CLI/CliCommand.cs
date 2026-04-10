@@ -1,11 +1,11 @@
-namespace QuantaCandle.Infra.Generation;
+namespace QuantaCandle.CLI;
 
 /// <summary>
 /// Parses the CLI command line into reusable executable options.
 /// </summary>
 public static class CliCommand
 {
-    private static readonly string[] SupportedCommands =
+    private static readonly string[] _supportedCommands =
     [
         "candlize",
         "scan",
@@ -85,7 +85,7 @@ public static class CliCommand
 
         if (result == CliMode.Unknown)
         {
-            throw new ArgumentException($"Unknown command '{value}'. Supported commands: {string.Join(", ", SupportedCommands)}.");
+            throw new ArgumentException($"Unknown command '{value}'. Supported commands: {string.Join(", ", _supportedCommands)}.");
         }
 
         return result;

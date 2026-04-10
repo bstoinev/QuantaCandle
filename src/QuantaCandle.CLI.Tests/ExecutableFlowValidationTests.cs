@@ -7,11 +7,11 @@ using Moq;
 
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
-using QuantaCandle.Infra.Generation;
+using QuantaCandle.Infra;
 using QuantaCandle.Infra.Options;
 using QuantaCandle.Infra.Pipeline;
 
-namespace QuantaCandle.Infra.Tests.Integration;
+namespace QuantaCandle.CLI.Tests;
 
 /// <summary>
 /// Validates the reusable recorder and generator flow without depending on executable projects.
@@ -36,10 +36,7 @@ public sealed class ExecutableFlowValidationTests
             await RewriteExchangeToBinanceAsync(tradeFiles);
             MoveTradesIntoExchangeDirectory(tradeFiles, tradeDirectory, "binance");
 
-            var generator = new TradeToCandleGenerator();
-            var result = await generator.Run(
-                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"),
-                CancellationToken.None);
+            var result = await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
 
             Assert.True(result.InputTradeCount > 0);
 

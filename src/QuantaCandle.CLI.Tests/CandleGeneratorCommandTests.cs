@@ -1,6 +1,4 @@
-using QuantaCandle.Infra.Generation;
-
-namespace QuantaCandle.Infra.Tests.Generation;
+namespace QuantaCandle.CLI.Tests;
 
 /// <summary>
 /// Verifies the positional command surface exposed by the CLI executable.

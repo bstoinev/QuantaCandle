@@ -1,4 +1,4 @@
-namespace QuantaCandle.Infra.Generation;
+namespace QuantaCandle.CLI;
 
 /// <summary>
 /// Describes one in-place candle generation request scoped by work directory, exchange, instrument, and optional trading dates.

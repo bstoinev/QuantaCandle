@@ -1,4 +1,4 @@
-namespace QuantaCandle.Infra.Generation;
+namespace QuantaCandle.CLI;
 
 /// <summary>
 /// Executes the candle generation workflow for a parsed command-line request.

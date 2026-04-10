@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 
-namespace QuantaCandle.Infra.Generation;
+namespace QuantaCandle.CLI;
 
 /// <summary>
 /// Generates candles directly from the in-place trade file layout under one work directory.
@@ -11,7 +11,7 @@ public sealed class TradeToCandleGenerator
     /// <summary>
     /// Generates candles for the requested exchange, instrument, and optional date scope.
     /// </summary>
-    public async Task<CliResult> Run(CliOptions options, CancellationToken cancellationToken)
+    public static async Task<CliResult> Run(CliOptions options, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(options);
 
