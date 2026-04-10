@@ -5,7 +5,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>QuantaCandle.CLI</AssemblyName>
+    <AssemblyName>qc</AssemblyName>
     <RootNamespace>QuantaCandle.CLI</RootNamespace>
     <CliOutputName>qc</CliOutputName>
   </PropertyGroup>
