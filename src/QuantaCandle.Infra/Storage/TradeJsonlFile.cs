@@ -41,7 +41,7 @@ public static class TradeJsonlFile
     /// <summary>
     /// Loads every trade record from the specified local JSONL file.
     /// </summary>
-    public static async Task<IReadOnlyList<TradeInfo>> ReadTradesAsync(string path, CancellationToken cancellationToken)
+    public static async Task<IReadOnlyList<TradeInfo>> ReadTrades(string path, CancellationToken cancellationToken)
     {
         var result = new List<TradeInfo>();
 
@@ -78,7 +78,7 @@ public static class TradeJsonlFile
     /// <summary>
     /// Finds the most recent resume watermark available from the instrument local files.
     /// </summary>
-    public static async Task<ResumeBoundary?> TryReadLatestResumeBoundaryAsync(
+    public static async Task<ResumeBoundary?> TryReadLatestResumeBoundary(
         string localRootDirectory,
         Instrument instrument,
         DateTimeOffset utcNow,
@@ -89,11 +89,7 @@ public static class TradeJsonlFile
 
         if (Directory.Exists(instrumentDirectory))
         {
-            var candidateFiles = Directory
-                .EnumerateFiles(instrumentDirectory, "*.jsonl", SearchOption.TopDirectoryOnly)
-                .ToList();
-
-            foreach (var candidateFile in candidateFiles)
+            foreach (var candidateFile in Directory.EnumerateFiles(instrumentDirectory, "*.jsonl", SearchOption.TopDirectoryOnly))
             {
                 var origin = GetResumeBoundaryOrigin(candidateFile);
                 if (origin is null)
@@ -101,7 +97,7 @@ public static class TradeJsonlFile
                     continue;
                 }
 
-                var resumeBoundary = await TryReadLatestResumeBoundaryFromFileAsync(candidateFile, origin, cancellationToken).ConfigureAwait(false);
+                var resumeBoundary = await TryReadLatestResumeBoundaryFromFile(candidateFile, origin, cancellationToken).ConfigureAwait(false);
                 if (resumeBoundary is not null
                     && (result is null || resumeBoundary.Value.TimestampUtc >= result.Value.TimestampUtc))
                 {
@@ -122,7 +118,7 @@ public static class TradeJsonlFile
     /// <summary>
     /// Writes the full payload to the specified JSONL file path.
     /// </summary>
-    public static async Task WriteFullPayloadAsync(string path, string payload, CancellationToken cancellationToken)
+    public static async Task WriteFullPayload(string path, string payload, CancellationToken cancellationToken)
     {
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(directory))
@@ -136,7 +132,7 @@ public static class TradeJsonlFile
     /// <summary>
     /// Appends the supplied trades to the specified JSONL file path without rebuilding the whole file payload.
     /// </summary>
-    public static async Task AppendTradesAsync(string path, IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
+    public static async Task AppendTrades(string path, IReadOnlyList<TradeInfo> trades, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -164,7 +160,7 @@ public static class TradeJsonlFile
     /// <summary>
     /// Appends the supplied payload to the specified JSONL file path.
     /// </summary>
-    public static async Task AppendPayloadAsync(string path, string payload, CancellationToken cancellationToken)
+    public static async Task AppendPayload(string path, string payload, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(payload))
         {
@@ -183,7 +179,7 @@ public static class TradeJsonlFile
     /// <summary>
     /// Rewrites the specified JSONL file with the supplied payload, or deletes it when the payload is empty.
     /// </summary>
-    public static async Task RewritePayloadAsync(string path, string payload, CancellationToken cancellationToken)
+    public static async Task RewritePayload(string path, string payload, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(payload))
         {
@@ -195,16 +191,26 @@ public static class TradeJsonlFile
             return;
         }
 
-        await WriteFullPayloadAsync(path, payload, cancellationToken).ConfigureAwait(false);
+        await WriteFullPayload(path, payload, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<ResumeBoundary?> TryReadLatestResumeBoundaryFromFileAsync(string path, string origin, CancellationToken cancellationToken)
+    /// <summary>
+    /// Streams JSONL records and keeps only the latest resume boundary candidate.
+    /// </summary>
+    internal static async Task<ResumeBoundary?> TryReadLatestResumeBoundaryFromReader(TextReader reader, string origin, CancellationToken cancellationToken)
     {
         ResumeBoundary? result = null;
-        string[] lines = await File.ReadAllLinesAsync(path, cancellationToken).ConfigureAwait(false);
 
-        foreach (var line in lines)
+        while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+            if (line is null)
+            {
+                break;
+            }
+
             if (string.IsNullOrWhiteSpace(line))
             {
                 continue;
@@ -225,10 +231,19 @@ public static class TradeJsonlFile
         return result;
     }
 
+    private static async Task<ResumeBoundary?> TryReadLatestResumeBoundaryFromFile(string path, string origin, CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var reader = new StreamReader(stream);
+
+        var result = await TryReadLatestResumeBoundaryFromReader(reader, origin, cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+
     /// <summary>
     /// Reads only the scratch checkpoint metadata needed to resume rollover after restart.
     /// </summary>
-    public static async Task<ScratchCheckpointMetadata?> TryReadScratchCheckpointMetadataAsync(string path, CancellationToken cancellationToken)
+    public static async Task<ScratchCheckpointMetadata?> TryReadScratchCheckpointMetadata(string path, CancellationToken cancellationToken)
     {
         ScratchCheckpointMetadata? result = null;
 

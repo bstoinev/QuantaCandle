@@ -202,13 +202,13 @@ public sealed class LocalFileTradeGapHealerTests
 
     private static async Task<IReadOnlyList<TradeInfo>> ReadTradesAsync(string rootDirectory, string relativePath)
     {
-        var result = await TradeJsonlFile.ReadTradesAsync(Path.Combine(rootDirectory, relativePath), CancellationToken.None);
+        var result = await TradeJsonlFile.ReadTrades(Path.Combine(rootDirectory, relativePath), CancellationToken.None);
         return result;
     }
 
     private static async Task WriteTradesAsync(string rootDirectory, string relativePath, IReadOnlyList<TradeInfo> trades)
     {
-        await TradeJsonlFile.WriteFullPayloadAsync(Path.Combine(rootDirectory, relativePath), TradeJsonlFile.BuildPayload(trades), CancellationToken.None);
+        await TradeJsonlFile.WriteFullPayload(Path.Combine(rootDirectory, relativePath), TradeJsonlFile.BuildPayload(trades), CancellationToken.None);
     }
 
     private static string CreateRootDirectory()

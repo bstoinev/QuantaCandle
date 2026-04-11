@@ -266,7 +266,7 @@ public sealed class TradeScratchCheckpointLifecycle(
         }
 
         log.Info($"Trade scratch checkpoint recovery: instrument={instrument}, path={scratchPath}.");
-        var metadata = await TradeJsonlFile.TryReadScratchCheckpointMetadataAsync(scratchPath, cancellationToken).ConfigureAwait(false);
+        var metadata = await TradeJsonlFile.TryReadScratchCheckpointMetadata(scratchPath, cancellationToken).ConfigureAwait(false);
         if (metadata is null)
         {
             log.Warn($"Trade scratch checkpoint recovery found an empty scratch file: instrument={instrument}, path={scratchPath}.");
@@ -291,7 +291,7 @@ public sealed class TradeScratchCheckpointLifecycle(
         CancellationToken cancellationToken)
     {
         log.Info($"Trade scratch checkpoint append: instrument={instrument}, path={scratchPath}, tradeCount={trades.Count}.");
-        await TradeJsonlFile.AppendTradesAsync(scratchPath, trades, cancellationToken).ConfigureAwait(false);
+        await TradeJsonlFile.AppendTrades(scratchPath, trades, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<string> FinalizeScratchAsync(

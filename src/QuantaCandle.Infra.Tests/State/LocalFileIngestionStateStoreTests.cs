@@ -83,6 +83,51 @@ public sealed class LocalFileIngestionStateStoreTests
     }
 
     [Fact]
+    public async Task StartupRecoveryUsesLatestTradeAcrossStreamingDailyAndScratchFiles()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var instrumentDirectory = Path.Combine(localRoot, "BTC-USDT");
+            Directory.CreateDirectory(instrumentDirectory);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(instrumentDirectory, "2026-03-12.jsonl"),
+                TradeJsonlFile.BuildPayload(
+                [
+                    CreateTrade("20", new DateTimeOffset(2026, 3, 12, 9, 30, 0, TimeSpan.Zero)),
+                    CreateTrade("21", new DateTimeOffset(2026, 3, 12, 9, 45, 0, TimeSpan.Zero)),
+                ]),
+                CancellationToken.None);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(instrumentDirectory, "qc-scratch.jsonl"),
+                TradeJsonlFile.BuildPayload(
+                [
+                    CreateTrade("22", new DateTimeOffset(2026, 3, 12, 10, 0, 0, TimeSpan.Zero)),
+                    CreateTrade("23", new DateTimeOffset(2026, 3, 12, 10, 15, 0, TimeSpan.Zero)),
+                ]),
+                CancellationToken.None);
+
+            var utcNow = new DateTimeOffset(2026, 3, 13, 8, 0, 0, TimeSpan.Zero);
+            var clockMoq = CreateClockMoq(() => utcNow);
+            var store = new LocalFileIngestionStateStore(localRoot, clockMoq.Object);
+
+            var resumeBoundary = await store.GetResumeBoundaryAsync(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), CancellationToken.None);
+
+            Assert.NotNull(resumeBoundary);
+            Assert.Equal("LatestScratchFile", resumeBoundary.Value.Origin);
+            Assert.Equal(new DateOnly(2026, 3, 12), resumeBoundary.Value.UtcDate);
+            Assert.Equal(new DateTimeOffset(2026, 3, 12, 10, 15, 0, TimeSpan.Zero), resumeBoundary.Value.TimestampUtc);
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
     public async Task StartupRecoveryFallsBackToExplicitCurrentDayUtcMidnightBoundaryWhenNoLocalFileExists()
     {
         var localRoot = CreateTempDirectory();

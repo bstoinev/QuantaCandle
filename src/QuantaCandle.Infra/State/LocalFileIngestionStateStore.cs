@@ -27,7 +27,7 @@ public sealed class LocalFileIngestionStateStore(string localRootDirectory, IClo
         }
         else
         {
-            result = await TradeJsonlFile.TryReadLatestResumeBoundaryAsync(localRootDirectory, symbol, clock.UtcNow, cancellationToken).ConfigureAwait(false);
+            result = await TradeJsonlFile.TryReadLatestResumeBoundary(localRootDirectory, symbol, clock.UtcNow, cancellationToken).ConfigureAwait(false);
 
             if (result is not null)
             {
