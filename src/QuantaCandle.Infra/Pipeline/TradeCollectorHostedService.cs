@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using System.Runtime.ExceptionServices;
 using LogMachina;
 using Microsoft.Extensions.Hosting;
 using QuantaCandle.Core.Trading;
@@ -18,61 +19,143 @@ public sealed class TradeCollectorHostedService(
     {
         await tradeRecorderStartupTask.Run(tradeSource.Exchange, options.Instruments, stoppingToken).ConfigureAwait(false);
 
-        using CancellationTokenSource collectorCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        CancellationToken collectorToken = collectorCts.Token;
+        using var collectorCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var collectorToken = collectorCts.Token;
 
-        List<Task> collectors = new List<Task>(options.Instruments.Count);
-        List<Channel<TradeInfo>> channels = new List<Channel<TradeInfo>>(options.Instruments.Count);
-        List<Task> ingests = new List<Task>(options.Instruments.Count);
+        var pipelines = new List<(Channel<TradeInfo> Channel, Task CollectorTask, Task IngestTask)>(options.Instruments.Count);
 
         foreach (Instrument instrument in options.Instruments)
         {
-            Channel<TradeInfo> channel = BoundedChannelFactory.CreateTradeChannel(options.ChannelCapacity);
-            channels.Add(channel);
-
-            collectors.Add(CollectInstrumentAsync(instrument, channel.Writer, collectorToken));
-            ingests.Add(ingestWorker.Run(channel.Reader, options, stoppingToken));
+            var channel = BoundedChannelFactory.CreateTradeChannel(options.ChannelCapacity);
+            var collectorTask = CollectInstrument(instrument, channel.Writer, collectorToken);
+            var ingestTask = ingestWorker.Run(channel.Reader, options, stoppingToken);
+            pipelines.Add((channel, collectorTask, ingestTask));
         }
 
-        try
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            collectorCts.Cancel();
-        }
+        await MonitorRuntime(pipelines, collectorCts, stoppingToken).ConfigureAwait(false);
+    }
 
-        try
+    private async Task MonitorRuntime(
+        IReadOnlyList<(Channel<TradeInfo> Channel, Task CollectorTask, Task IngestTask)> pipelines,
+        CancellationTokenSource collectorCts,
+        CancellationToken stoppingToken)
+    {
+        var activeCollectors = pipelines.Select(static pipeline => pipeline.CollectorTask).ToHashSet();
+        var activeIngests = pipelines.Select(static pipeline => pipeline.IngestTask).ToHashSet();
+        var shutdownTask = Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+
+        while (activeCollectors.Count != 0 || activeIngests.Count != 0)
         {
-            await Task.WhenAll(collectors).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            log.Warn($"Collector task failed during shutdown with the following exception: {ex}");
-        }
-        finally
-        {
-            foreach (Channel<TradeInfo> channel in channels)
+            if (stoppingToken.IsCancellationRequested)
             {
-                channel.Writer.TryComplete();
+                await Shutdown(pipelines, collectorCts).ConfigureAwait(false);
+                break;
             }
-        }
 
-        try
-        {
-            await Task.WhenAll(ingests).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            log.Warn($"Ingest worker failed during shutdown with the following exception: {ex}");
+            var monitoredTasks = new List<Task>(activeCollectors.Count + activeIngests.Count + 1);
+            monitoredTasks.AddRange(activeCollectors);
+            monitoredTasks.AddRange(activeIngests);
+            monitoredTasks.Add(shutdownTask);
+
+            var completedTask = await Task.WhenAny(monitoredTasks).ConfigureAwait(false);
+            if (completedTask == shutdownTask || stoppingToken.IsCancellationRequested)
+            {
+                await Shutdown(pipelines, collectorCts).ConfigureAwait(false);
+                break;
+            }
+
+            var pipeline = pipelines.First(pipeline => pipeline.CollectorTask == completedTask || pipeline.IngestTask == completedTask);
+            if (completedTask == pipeline.CollectorTask)
+            {
+                activeCollectors.Remove(pipeline.CollectorTask);
+                pipeline.Channel.Writer.TryComplete();
+
+                var fatalException = GetFatalException(pipeline.CollectorTask, stoppingToken);
+                if (fatalException is not null)
+                {
+                    await FailRuntime(pipelines, collectorCts, pipeline.CollectorTask, fatalException).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                activeIngests.Remove(pipeline.IngestTask);
+
+                var fatalException = GetFatalException(pipeline.IngestTask, stoppingToken);
+                if (fatalException is not null)
+                {
+                    await FailRuntime(pipelines, collectorCts, pipeline.IngestTask, fatalException).ConfigureAwait(false);
+                }
+            }
         }
     }
 
-    private async Task CollectInstrumentAsync(Instrument instrument, ChannelWriter<TradeInfo> writer, CancellationToken stoppingToken)
+    private static Exception? GetFatalException(Task task, CancellationToken stoppingToken)
+    {
+        Exception? result = null;
+
+        if (task.IsFaulted)
+        {
+            result = task.Exception?.InnerExceptions.Count == 1
+                ? task.Exception.InnerException
+                : task.Exception;
+        }
+        else if (task.IsCanceled && !stoppingToken.IsCancellationRequested)
+        {
+            result = new TaskCanceledException(task);
+        }
+
+        return result;
+    }
+
+    private async Task FailRuntime(
+        IReadOnlyList<(Channel<TradeInfo> Channel, Task CollectorTask, Task IngestTask)> pipelines,
+        CancellationTokenSource collectorCts,
+        Task failedTask,
+        Exception fatalException)
+    {
+        collectorCts.Cancel();
+
+        foreach ((Channel<TradeInfo> channel, _, _) in pipelines)
+        {
+            channel.Writer.TryComplete();
+        }
+
+        await AwaitTasksForCleanup(pipelines.Select(static pipeline => pipeline.CollectorTask), "Collector task failed during cleanup after a fatal runtime error.").ConfigureAwait(false);
+        await AwaitTasksForCleanup(pipelines.Select(static pipeline => pipeline.IngestTask).Where(task => task != failedTask), "Ingest worker failed during cleanup after a fatal runtime error.").ConfigureAwait(false);
+
+        ExceptionDispatchInfo.Capture(fatalException).Throw();
+    }
+
+    private async Task Shutdown(
+        IReadOnlyList<(Channel<TradeInfo> Channel, Task CollectorTask, Task IngestTask)> pipelines,
+        CancellationTokenSource collectorCts)
+    {
+        collectorCts.Cancel();
+
+        await AwaitTasksForCleanup(pipelines.Select(static pipeline => pipeline.CollectorTask), "Collector task failed during shutdown.").ConfigureAwait(false);
+
+        foreach ((Channel<TradeInfo> channel, _, _) in pipelines)
+        {
+            channel.Writer.TryComplete();
+        }
+
+        await AwaitTasksForCleanup(pipelines.Select(static pipeline => pipeline.IngestTask), "Ingest worker failed during shutdown.").ConfigureAwait(false);
+    }
+
+    private async Task AwaitTasksForCleanup(IEnumerable<Task> tasks, string warningMessage)
+    {
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            log.Warn(warningMessage);
+            log.Error(ex);
+        }
+    }
+
+    private async Task CollectInstrument(Instrument instrument, ChannelWriter<TradeInfo> writer, CancellationToken stoppingToken)
     {
         TimeSpan delay = retryOptions.InitialDelay;
 

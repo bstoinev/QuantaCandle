@@ -43,7 +43,11 @@ static async Task<int> Run(string[] args)
 
     using IHost host = Host.CreateDefaultBuilder()
         .ConfigureLogging(builder => builder.ClearProviders())
-        .ConfigureServices(services => services.AddSimpleInjector(ioc, simpleInjector => simpleInjector.AddHostedService<TradeCollectorHostedService>()))
+        .ConfigureServices(services =>
+        {
+            services.Configure<HostOptions>(options => options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.StopHost);
+            services.AddSimpleInjector(ioc, simpleInjector => simpleInjector.AddHostedService<TradeCollectorHostedService>());
+        })
         .UseConsoleLifetime()
         .Build();
 
