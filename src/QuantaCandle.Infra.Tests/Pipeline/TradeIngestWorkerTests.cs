@@ -320,7 +320,7 @@ public sealed class TradeIngestWorkerTests
     }
 
     [Fact]
-    public async Task LiveIngestionBeginsImmediatelyWithoutWaitingForRecovery()
+    public async Task LiveIngestionBeginsImmediatelyWithoutResumeBoundaryAccess()
     {
         var options = CreateOptions(batchSize: 1);
         var appendObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -334,18 +334,17 @@ public sealed class TradeIngestWorkerTests
         await channel.Writer.WriteAsync(CreateTrade("101", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
 
         await appendObserved.Task.WaitAsync(TimeSpan.FromSeconds(3));
-        Assert.True(stateStore.GetWatermarkStarted);
+        Assert.False(stateStore.GetResumeBoundaryStarted);
 
-        stateStore.ReleaseResumeBoundary();
         channel.Writer.Complete();
         await run;
     }
 
     [Fact]
-    public async Task DiscontinuityOpensAndPersistsGapRecord()
+    public async Task LiveIngestDoesNotRecordGapStateDuringAcceptedTradeHandling()
     {
         var options = CreateOptions(batchSize: 2);
-        var stateStore = new RecordingIngestionStateStore();
+        var stateStore = new GapAccessFailingIngestionStateStore();
         var worker = CreateWorker(options, stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
@@ -357,48 +356,36 @@ public sealed class TradeIngestWorkerTests
         channel.Writer.Complete();
         await run;
 
-        Assert.Equal(2, stateStore.RecordedGaps.Count);
-        Assert.Equal(TradeGapStatus.Open, stateStore.RecordedGaps[0].Status);
-        Assert.Equal(TradeGapStatus.Bounded, stateStore.RecordedGaps[1].Status);
+        var watermark = Assert.Single(stateStore.Watermarks);
+        Assert.Equal("4", watermark.Watermark.TradeId);
     }
 
     [Fact]
-    public async Task GapBecomesBoundedWhenBothBordersAreKnown()
+    public async Task ShutdownDrainDoesNotRecordGapState()
     {
         var options = CreateOptions(batchSize: 2);
-        var stateStore = new InMemoryIngestionStateStore();
+        using var stoppingCts = new CancellationTokenSource();
+        var stateStore = new GapAccessFailingIngestionStateStore();
         var worker = CreateWorker(options, stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
-        var run = worker.Run(channel.Reader, options, CancellationToken.None);
+        var run = worker.Run(channel.Reader, options, stoppingCts.Token);
 
         await channel.Writer.WriteAsync(CreateTrade("1", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
         await channel.Writer.WriteAsync(CreateTrade("4", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero)));
+        stoppingCts.Cancel();
 
-        channel.Writer.Complete();
         await run;
 
-        var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), options.Instruments[0], CancellationToken.None);
-
-        var gap = Assert.Single(gaps);
-        Assert.Equal(TradeGapStatus.Bounded, gap.Status);
-        Assert.NotNull(gap.ToInclusive);
-        Assert.Equal("1", gap.FromExclusive.TradeId);
-        Assert.Equal("4", gap.ToInclusive?.TradeId);
-        Assert.Equal(new MissingTradeIdRange(2, 3), gap.MissingTradeIds);
+        var watermark = Assert.Single(stateStore.Watermarks);
+        Assert.Equal("4", watermark.Watermark.TradeId);
     }
 
     [Fact]
-    public async Task CheckpointSemanticsRemainIndependentFromBoundedGaps()
+    public async Task LiveIngestStillUpdatesWatermarkAcrossNonSequentialTradeIds()
     {
         var options = CreateOptions(batchSize: 1);
-        var stateStore = new InMemoryIngestionStateStore();
-        await stateStore.SetWatermarkAsync(
-            new ExchangeId("Stub"),
-            options.Instruments[0],
-            new TradeWatermark("100", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero)),
-            CancellationToken.None);
-
+        var stateStore = new GapAccessFailingIngestionStateStore();
         var worker = CreateWorker(options, stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
@@ -409,53 +396,15 @@ public sealed class TradeIngestWorkerTests
         channel.Writer.Complete();
         await run;
 
-        var checkpoint = await stateStore.GetWatermarkAsync(new ExchangeId("Stub"), options.Instruments[0], CancellationToken.None);
-        var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), options.Instruments[0], CancellationToken.None);
-
-        Assert.Equal("105", checkpoint?.TradeId);
-        Assert.Single(gaps);
-        Assert.Equal(TradeGapStatus.Bounded, gaps[0].Status);
-        Assert.Equal(new MissingTradeIdRange(101, 104), gaps[0].MissingTradeIds);
+        var checkpoint = Assert.Single(stateStore.Watermarks);
+        Assert.Equal("105", checkpoint.Watermark.TradeId);
     }
 
     [Fact]
-    public async Task StartupResumeBoundaryCreatesGapWithoutManufacturingFakeTrade()
-    {
-        var options = CreateOptions(batchSize: 1);
-        var stateStore = new InMemoryIngestionStateStore();
-        stateStore.SetResumeBoundary(
-            new ExchangeId("Stub"),
-            options.Instruments[0],
-            new ResumeBoundary(
-                new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero),
-                new DateOnly(2026, 3, 12),
-                "LatestLocalDailyFile"));
-
-        var worker = CreateWorker(options, stateStore, out _, out _);
-        var channel = Channel.CreateUnbounded<TradeInfo>();
-
-        var run = worker.Run(channel.Reader, options, CancellationToken.None);
-
-        await channel.Writer.WriteAsync(CreateTrade("105", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 5, TimeSpan.Zero)));
-
-        channel.Writer.Complete();
-        await run;
-
-        var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), options.Instruments[0], CancellationToken.None);
-
-        var gap = Assert.Single(gaps);
-        Assert.Equal(TradeGapStatus.Bounded, gap.Status);
-        Assert.Equal("105", gap.FromExclusive.TradeId);
-        Assert.Equal(new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero), gap.FromExclusive.Timestamp);
-        Assert.Equal("105", gap.ToInclusive?.TradeId);
-        Assert.Null(gap.MissingTradeIds);
-    }
-
-    [Fact]
-    public async Task DuplicateOrOutOfOrderEventsDoNotCreateFalseGaps()
+    public async Task DuplicateOrOutOfOrderEventsStillDoNotBreakIngestFlow()
     {
         var options = CreateOptions(batchSize: 4);
-        var stateStore = new InMemoryIngestionStateStore();
+        var stateStore = new GapAccessFailingIngestionStateStore();
         var worker = CreateWorker(options, stateStore, out _, out _);
         var channel = Channel.CreateUnbounded<TradeInfo>();
 
@@ -469,9 +418,8 @@ public sealed class TradeIngestWorkerTests
         channel.Writer.Complete();
         await run;
 
-        var gaps = await stateStore.GetGapsAsync(new ExchangeId("Stub"), options.Instruments[0], CancellationToken.None);
-
-        Assert.Empty(gaps);
+        var checkpoint = Assert.Single(stateStore.Watermarks);
+        Assert.Equal("102", checkpoint.Watermark.TradeId);
     }
 
     private static CollectorOptions CreateOptions(int batchSize, TimeSpan? flushInterval = null, TimeSpan? checkpointInterval = null)
@@ -527,11 +475,11 @@ public sealed class TradeIngestWorkerTests
             resumeBoundary = new TaskCompletionSource<ResumeBoundary?>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
-        public bool GetWatermarkStarted { get; private set; }
+        public bool GetResumeBoundaryStarted { get; private set; }
 
         public ValueTask<ResumeBoundary?> GetResumeBoundaryAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
         {
-            GetWatermarkStarted = true;
+            GetResumeBoundaryStarted = true;
             return new ValueTask<ResumeBoundary?>(resumeBoundary.Task.WaitAsync(cancellationToken));
         }
 
@@ -554,16 +502,11 @@ public sealed class TradeIngestWorkerTests
         {
             return ValueTask.FromResult<IReadOnlyList<TradeGap>>(Array.Empty<TradeGap>());
         }
-
-        public void ReleaseResumeBoundary()
-        {
-            resumeBoundary.TrySetResult(null);
-        }
     }
 
-    private sealed class RecordingIngestionStateStore : IIngestionStateStore
+    private sealed class GapAccessFailingIngestionStateStore : IIngestionStateStore
     {
-        public List<TradeGap> RecordedGaps { get; } = new();
+        public List<(ExchangeId Exchange, Instrument Symbol, TradeWatermark Watermark)> Watermarks { get; } = [];
 
         public ValueTask<ResumeBoundary?> GetResumeBoundaryAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
         {
@@ -577,18 +520,18 @@ public sealed class TradeIngestWorkerTests
 
         public ValueTask SetWatermarkAsync(ExchangeId exchange, Instrument symbol, TradeWatermark watermark, CancellationToken cancellationToken)
         {
+            Watermarks.Add((exchange, symbol, watermark));
             return ValueTask.CompletedTask;
         }
 
         public ValueTask RecordGapAsync(TradeGap gap, CancellationToken cancellationToken)
         {
-            RecordedGaps.Add(gap);
-            return ValueTask.CompletedTask;
+            throw new InvalidOperationException("TradeIngestWorker should not record runtime gap state.");
         }
 
         public ValueTask<IReadOnlyList<TradeGap>> GetGapsAsync(ExchangeId exchange, Instrument symbol, CancellationToken cancellationToken)
         {
-            return ValueTask.FromResult<IReadOnlyList<TradeGap>>(RecordedGaps);
+            throw new InvalidOperationException("TradeIngestWorker should not read gap state.");
         }
     }
 

@@ -21,7 +21,6 @@ public sealed class TradeIngestWorker(
         Task<bool>? waitToReadTask = null;
 
         var batch = new List<TradeInfo>(options.BatchSize);
-        var gapDetector = new TradeGapDetector(ingestionStateStore);
         using var timer = new PeriodicTimer(options.CheckpointInterval);
         var manualCheckpointVersion = checkpointSignal.CurrentVersion;
         var manualCheckpointTask = checkpointSignal.WaitForNextSignalAsync(manualCheckpointVersion, stoppingToken).AsTask();
@@ -63,7 +62,6 @@ public sealed class TradeIngestWorker(
 
                         if (deduplicator.TryAccept(trade.Key))
                         {
-                            await gapDetector.Observe(trade, stoppingToken).ConfigureAwait(false);
                             batch.Add(trade);
                             if (batch.Count >= options.BatchSize)
                             {
@@ -99,8 +97,6 @@ public sealed class TradeIngestWorker(
         }
         finally
         {
-            await gapDetector.FlushPending(CancellationToken.None).ConfigureAwait(false);
-
             while (reader.TryRead(out TradeInfo trade))
             {
                 stats.OnTradeReceived(trade.Timestamp);
@@ -111,7 +107,6 @@ public sealed class TradeIngestWorker(
                     continue;
                 }
 
-                await gapDetector.Observe(trade, CancellationToken.None).ConfigureAwait(false);
                 batch.Add(trade);
                 if (batch.Count >= options.BatchSize)
                 {
@@ -119,7 +114,6 @@ public sealed class TradeIngestWorker(
                 }
             }
 
-            await gapDetector.FlushPending(CancellationToken.None).ConfigureAwait(false);
             await FlushBatch(batch, CancellationToken.None).ConfigureAwait(false);
             await FlushSinkOnShutdown(CancellationToken.None).ConfigureAwait(false);
         }
