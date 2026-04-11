@@ -71,14 +71,13 @@ public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher, ITradeSna
         cancellationToken.ThrowIfCancellationRequested();
         _ = TradeLocalDailyFilePath.ValidateSnapshot(_options.LocalRootDirectory, exchange, instrument, snapshotFilePath);
 
-        var payload = await File.ReadAllTextAsync(snapshotFilePath, cancellationToken).ConfigureAwait(false);
         var snapshotFileName = Path.GetFileName(snapshotFilePath);
         var objectKey = TradeSinkS3SnapshotObjectKey.Build(_options.Prefix, exchange.ToString(), instrument.ToString(), snapshotFileName);
         _log.Info($"Trade S3 snapshot upload start: bucket={_options.BucketName}, objectKey={objectKey}, path={snapshotFilePath}.");
 
         try
         {
-            await _uploader.UploadTextAsync(_options.BucketName, objectKey, payload, cancellationToken).ConfigureAwait(false);
+            await _uploader.UploadFileAsync(_options.BucketName, objectKey, snapshotFilePath, cancellationToken).ConfigureAwait(false);
             _log.Info($"Trade S3 snapshot upload success: bucket={_options.BucketName}, objectKey={objectKey}.");
         }
         catch (Exception ex)

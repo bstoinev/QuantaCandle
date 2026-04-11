@@ -228,8 +228,8 @@ public sealed class TradeSinkS3SimpleTests
             var upload = Assert.Single(uploads);
             Assert.Equal("my-bucket", upload.BucketName);
             Assert.Equal("trades/raw/Stub/BTC-USDT/2026-03-12.141516789.jsonl", upload.ObjectKey);
-            Assert.True(upload.UsedTextUpload);
-            Assert.Contains("\"tradeId\":\"123\"", upload.FilePath, StringComparison.Ordinal);
+            Assert.Equal(snapshotPath, upload.FilePath);
+            Assert.False(upload.UsedTextUpload);
             Assert.True(File.Exists(snapshotPath));
         }
         finally
@@ -247,7 +247,7 @@ public sealed class TradeSinkS3SimpleTests
         {
             var uploaderMoq = new Mock<IS3ObjectUploader>();
             uploaderMoq
-                .Setup(mock => mock.UploadTextAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Setup(mock => mock.UploadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("S3 unavailable"));
 
             var sink = new TradeSinkS3Simple(
@@ -260,6 +260,44 @@ public sealed class TradeSinkS3SimpleTests
             await WriteTradeFileAsync(snapshotPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero), 10m)]);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => ((ITradeSnapshotFileDispatcher)sink).DispatchAsync(StubExchange, instrument, snapshotPath, CancellationToken.None).AsTask());
+
+            Assert.True(File.Exists(snapshotPath));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task SnapshotDispatchPassesCancellationTokenToFileUploadAndKeepsLocalSnapshotFileWhenCanceled()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            using var cancellationTokenSource = new CancellationTokenSource();
+            var uploaderMoq = new Mock<IS3ObjectUploader>();
+            uploaderMoq
+                .Setup(mock => mock.UploadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns<string, string, string, CancellationToken>((_, _, _, cancellationToken) =>
+                {
+                    Assert.Equal(cancellationTokenSource.Token, cancellationToken);
+                    cancellationTokenSource.Cancel();
+                    return Task.FromCanceled(cancellationTokenSource.Token);
+                });
+
+            var sink = new TradeSinkS3Simple(
+                new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
+                uploaderMoq.Object,
+                CreateLogMoq().Object);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var snapshotPath = TradeLocalDailyFilePath.BuildSnapshot(localRoot, StubExchange, instrument, new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+
+            await WriteTradeFileAsync(snapshotPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero), 10m)]);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => ((ITradeSnapshotFileDispatcher)sink).DispatchAsync(StubExchange, instrument, snapshotPath, cancellationTokenSource.Token).AsTask());
 
             Assert.True(File.Exists(snapshotPath));
         }
