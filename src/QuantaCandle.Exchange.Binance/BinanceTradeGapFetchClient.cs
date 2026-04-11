@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 
 using QuantaCandle.Core.Trading;
@@ -14,39 +13,31 @@ namespace QuantaCandle.Exchange.Binance;
 /// </remarks>
 public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGapFetchClient
 {
-    private const int MaxTradesPerRequest = 1000;
-    private static readonly Uri DefaultRestBaseAddress = new("https://api.binance.com");
-    private static readonly ExchangeId BinanceExchange = new("Binance");
-
-    private readonly HttpClient Http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+    private readonly HttpClient _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
 
     /// <summary>
     /// Fetches normalized trade items for the requested bounded trade identifier range.
     /// </summary>
-    public async ValueTask<IReadOnlyList<TradeInfo>> Fetch(
-        Instrument instrument,
-        long missingTradeIdStart,
-        long missingTradeIdEnd,
-        CancellationToken cancellationToken)
+    public async ValueTask<IReadOnlyList<TradeInfo>> Fetch(Instrument instrument, long startId, long endId, CancellationToken terminator)
     {
-        ValidateRequestedRange(missingTradeIdStart, missingTradeIdEnd);
+        ValidateRequestedRange(startId, endId);
 
         var requestedSymbol = BinanceSymbol.ToStreamSymbol(instrument);
         var fetchedTrades = new List<TradeInfo>();
-        var nextTradeId = missingTradeIdStart;
+        var nextTradeId = startId;
 
-        while (nextTradeId <= missingTradeIdEnd)
+        while (nextTradeId <= endId)
         {
-            var remainingTradeCount = missingTradeIdEnd - nextTradeId + 1;
-            var requestLimit = (int)Math.Min(MaxTradesPerRequest, remainingTradeCount);
+            var remainingTradeCount = endId - nextTradeId + 1;
+            var requestLimit = (int)Math.Min(BinanceHelper.MAX_TRADES_PER_REQUEST, remainingTradeCount);
 
             using var request = CreateRequest(requestedSymbol, nextTradeId, requestLimit);
-            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, terminator).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
-            await using var payloadStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var payloadDocument = await JsonDocument.ParseAsync(payloadStream, cancellationToken: cancellationToken);
-            var pageTrades = ParseTrades(payloadDocument.RootElement, instrument, requestedSymbol, nextTradeId, missingTradeIdEnd);
+            await using var payloadStream = await response.Content.ReadAsStreamAsync(terminator).ConfigureAwait(false);
+            using var payloadDocument = await JsonDocument.ParseAsync(payloadStream, cancellationToken: terminator).ConfigureAwait(false);
+            var pageTrades = ParseTrades(payloadDocument.RootElement, instrument, requestedSymbol, nextTradeId, endId);
 
             if (pageTrades.Count == 0)
             {
@@ -55,7 +46,7 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
 
             SortTradesByNumericTradeId(pageTrades);
             fetchedTrades.AddRange(pageTrades);
-            nextTradeId = GetTradeId(pageTrades[^1]) + 1;
+            nextTradeId = BinanceHelper.GetTradeId(pageTrades[^1]) + 1;
         }
 
         SortTradesByNumericTradeId(fetchedTrades);
@@ -76,7 +67,7 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
     {
         var path = FormattableString.Invariant($"/api/v3/historicalTrades?symbol={Uri.EscapeDataString(requestedSymbol)}&limit={requestLimit}&fromId={fromTradeId}");
 
-        var result = new Uri(Http.BaseAddress ?? DefaultRestBaseAddress, path);
+        var result = new Uri(_http.BaseAddress ?? BinanceHelper.RestBaseAddress, path);
 
         return result;
     }
@@ -85,76 +76,13 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
     {
         for (var i = 1; i < trades.Count; i++)
         {
-            var currentTradeId = GetTradeId(trades[i]);
-            var previousTradeId = GetTradeId(trades[i - 1]);
+            var currentTradeId = BinanceHelper.GetTradeId(trades[i]);
+            var previousTradeId = BinanceHelper.GetTradeId(trades[i - 1]);
             if (currentTradeId == previousTradeId)
             {
                 throw new InvalidOperationException($"Binance gap fetch returned duplicate trade id '{currentTradeId}'.");
             }
         }
-    }
-
-    private static long GetInt64(JsonElement payload, string propertyName, int index)
-    {
-        if (!payload.TryGetProperty(propertyName, out var property))
-        {
-            throw new InvalidOperationException($"Binance trade payload at index {index} is missing required property '{propertyName}'.");
-        }
-
-        if (property.ValueKind != JsonValueKind.Number || !property.TryGetInt64(out var result))
-        {
-            throw new InvalidOperationException($"Binance trade payload at index {index} has non-numeric '{propertyName}'.");
-        }
-
-        return result;
-    }
-
-    private static string? GetOptionalString(JsonElement payload, string propertyName, int index)
-    {
-        string? result = null;
-
-        if (payload.TryGetProperty(propertyName, out var property))
-        {
-            if (property.ValueKind != JsonValueKind.String)
-            {
-                throw new InvalidOperationException($"Binance trade payload at index {index} has non-string '{propertyName}'.");
-            }
-
-            result = property.GetString();
-        }
-
-        return result;
-    }
-
-    private static decimal GetRequiredDecimal(JsonElement payload, string propertyName, int index)
-    {
-        if (!payload.TryGetProperty(propertyName, out var property))
-        {
-            throw new InvalidOperationException($"Binance trade payload at index {index} is missing required property '{propertyName}'.");
-        }
-
-        if (property.ValueKind != JsonValueKind.String)
-        {
-            throw new InvalidOperationException($"Binance trade payload at index {index} has non-string '{propertyName}'.");
-        }
-
-        var rawValue = property.GetString();
-        if (!decimal.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out var result))
-        {
-            throw new InvalidOperationException($"Binance trade payload at index {index} has invalid decimal '{propertyName}'.");
-        }
-
-        return result;
-    }
-
-    private static long GetTradeId(TradeInfo trade)
-    {
-        if (!long.TryParse(trade.Key.TradeId, NumberStyles.None, CultureInfo.InvariantCulture, out var result))
-        {
-            throw new InvalidOperationException($"Trade '{trade.Key.TradeId}' is not numeric.");
-        }
-
-        return result;
     }
 
     private static List<TradeInfo> ParseTrades(
@@ -164,29 +92,23 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
         long requestedStartTradeId,
         long requestedEndTradeId)
     {
-        if (payload.ValueKind != JsonValueKind.Array)
-        {
-            throw new InvalidOperationException("Binance historical trades payload must be a JSON array.");
-        }
+        BinanceHelper.ValidateArray(payload, "historical trades");
 
         var result = new List<TradeInfo>(payload.GetArrayLength());
         var index = 0;
         foreach (var item in payload.EnumerateArray())
         {
-            if (item.ValueKind != JsonValueKind.Object)
-            {
-                throw new InvalidOperationException($"Binance trade payload at index {index} must be a JSON object.");
-            }
+            BinanceHelper.ValidateObject(item, index, "trade");
 
-            var tradeId = GetInt64(item, "id", index);
+            var tradeId = BinanceHelper.GetInt64(item, "id", index, "trade");
             ValidateTradeIdBounds(tradeId, requestedStartTradeId, requestedEndTradeId, index);
             ValidateOptionalInstrumentData(item, requestedSymbol, index);
 
-            var timestampUnixMilliseconds = GetInt64(item, "time", index);
-            var price = GetRequiredDecimal(item, "price", index);
-            var quantity = GetRequiredDecimal(item, "qty", index);
+            var timestampUnixMilliseconds = BinanceHelper.GetInt64(item, "time", index, "trade");
+            var price = BinanceHelper.GetRequiredDecimal(item, "price", index, "trade");
+            var quantity = BinanceHelper.GetRequiredDecimal(item, "qty", index, "trade");
             var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timestampUnixMilliseconds);
-            var tradeKey = new TradeKey(BinanceExchange, instrument, tradeId.ToString(CultureInfo.InvariantCulture));
+            var tradeKey = new TradeKey(BinanceHelper.Signature, instrument, tradeId.ToString(System.Globalization.CultureInfo.InvariantCulture));
             var trade = new TradeInfo(tradeKey, timestamp, price, quantity);
             result.Add(trade);
             index++;
@@ -197,19 +119,19 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
 
     private static void SortTradesByNumericTradeId(List<TradeInfo> trades)
     {
-        trades.Sort(static (left, right) => GetTradeId(left).CompareTo(GetTradeId(right)));
+        trades.Sort(static (left, right) => BinanceHelper.GetTradeId(left).CompareTo(BinanceHelper.GetTradeId(right)));
     }
 
     private static void ValidateOptionalInstrumentData(JsonElement payload, string requestedSymbol, int index)
     {
-        var payloadExchange = GetOptionalString(payload, "exchange", index);
-        if (payloadExchange is not null && !payloadExchange.Equals(BinanceExchange.Value, StringComparison.OrdinalIgnoreCase))
+        var payloadExchange = BinanceHelper.GetOptionalString(payload, "exchange", index, "trade");
+        if (payloadExchange is not null && !payloadExchange.Equals(BinanceHelper.Signature.Value, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"Binance trade payload at index {index} has unexpected exchange '{payloadExchange}'. Expected '{BinanceExchange.Value}'.");
+                $"Binance trade payload at index {index} has unexpected exchange '{payloadExchange}'. Expected '{BinanceHelper.Signature.Value}'.");
         }
 
-        var payloadSymbol = GetOptionalString(payload, "symbol", index);
+        var payloadSymbol = BinanceHelper.GetOptionalString(payload, "symbol", index, "trade");
         if (payloadSymbol is not null && !payloadSymbol.Equals(requestedSymbol, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
