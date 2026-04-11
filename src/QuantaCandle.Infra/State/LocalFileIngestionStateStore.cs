@@ -10,7 +10,7 @@ namespace QuantaCandle.Infra;
 /// </summary>
 public sealed class LocalFileIngestionStateStore(string localRootDirectory, IClock clock) : IIngestionStateStore
 {
-    private readonly ConcurrentDictionary<(ExchangeId Exchange, Instrument Symbol), IReadOnlyList<TradeGap>> gapsByInstrument = [];
+    private readonly ConcurrentDictionary<(ExchangeId Exchange, Instrument Symbol), ConcurrentDictionary<Guid, TradeGap>> gapsByInstrument = [];
     private readonly ConcurrentDictionary<(ExchangeId Exchange, Instrument Symbol), ResumeBoundary> resumeBoundaries = [];
     private readonly ConcurrentDictionary<(ExchangeId Exchange, Instrument Symbol), TradeWatermark> watermarks = [];
 
@@ -67,15 +67,9 @@ public sealed class LocalFileIngestionStateStore(string localRootDirectory, IClo
     /// </summary>
     public ValueTask RecordGapAsync(TradeGap gap, CancellationToken cancellationToken)
     {
-        gapsByInstrument.AddOrUpdate(
-            (gap.Exchange, gap.Symbol),
-            _ => new[] { gap },
-            (_, existing) =>
-            {
-                var result = existing.ToList();
-                result.Add(gap);
-                return result;
-            });
+        var instrumentGaps = gapsByInstrument.GetOrAdd((gap.Exchange, gap.Symbol), _ => new ConcurrentDictionary<Guid, TradeGap>());
+
+        instrumentGaps[gap.GapId] = gap;
 
         return ValueTask.CompletedTask;
     }
@@ -89,7 +83,9 @@ public sealed class LocalFileIngestionStateStore(string localRootDirectory, IClo
 
         if (gapsByInstrument.TryGetValue((exchange, symbol), out var gaps))
         {
-            result = gaps;
+            result = gaps.Values
+                .OrderBy(gap => gap.ObservedAt)
+                .ToArray();
         }
 
         return ValueTask.FromResult(result);
