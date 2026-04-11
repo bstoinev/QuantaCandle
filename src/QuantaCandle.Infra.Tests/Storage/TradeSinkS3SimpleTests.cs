@@ -35,8 +35,8 @@ public sealed class TradeSinkS3SimpleTests
             var upload = Assert.Single(uploads);
             Assert.Equal("my-bucket", upload.BucketName);
             Assert.Equal("trades/raw/Stub/BTC-USDT/2026-03-11.jsonl", upload.ObjectKey);
-            Assert.Contains("\"tradeId\":\"123\"", upload.Payload, StringComparison.Ordinal);
-            Assert.DoesNotContain("\"tradeId\":\"122\"", upload.Payload, StringComparison.Ordinal);
+            Assert.Equal(dispatchPath, upload.FilePath);
+            Assert.False(upload.UsedTextUpload);
             Assert.False(File.Exists(dispatchPath));
             Assert.True(File.Exists(ignoredPath));
         }
@@ -56,7 +56,7 @@ public sealed class TradeSinkS3SimpleTests
             var uploadCompleted = false;
             var uploaderMoq = new Mock<IS3ObjectUploader>();
             uploaderMoq
-                .Setup(mock => mock.UploadTextAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Setup(mock => mock.UploadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .Callback(() => uploadCompleted = true)
                 .Returns(Task.CompletedTask);
 
@@ -89,7 +89,7 @@ public sealed class TradeSinkS3SimpleTests
         {
             var uploaderMoq = new Mock<IS3ObjectUploader>();
             uploaderMoq
-                .Setup(mock => mock.UploadTextAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Setup(mock => mock.UploadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("S3 unavailable"));
 
             var sink = new TradeSinkS3Simple(
@@ -102,6 +102,76 @@ public sealed class TradeSinkS3SimpleTests
             await WriteTradeFileAsync(dispatchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(StubExchange, instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None).AsTask());
+
+            Assert.True(File.Exists(dispatchPath));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task FailedDispatchDoesNotDeleteLocalFileBeforeUploadCompletes()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var uploaderMoq = new Mock<IS3ObjectUploader>();
+            uploaderMoq
+                .Setup(mock => mock.UploadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Callback<string, string, string, CancellationToken>((_, _, filePath, _) => Assert.True(File.Exists(filePath)))
+                .ThrowsAsync(new InvalidOperationException("S3 unavailable"));
+
+            var sink = new TradeSinkS3Simple(
+                new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
+                uploaderMoq.Object,
+                CreateLogMoq().Object);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 11));
+
+            await WriteTradeFileAsync(dispatchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => sink.DispatchAsync(StubExchange, instrument, new DateOnly(2026, 3, 11), dispatchPath, CancellationToken.None).AsTask());
+
+            Assert.True(File.Exists(dispatchPath));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task DispatchPassesCancellationTokenToFileUploadAndKeepsLocalFileWhenCanceled()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            using var cancellationTokenSource = new CancellationTokenSource();
+            var uploaderMoq = new Mock<IS3ObjectUploader>();
+            uploaderMoq
+                .Setup(mock => mock.UploadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns<string, string, string, CancellationToken>((_, _, _, cancellationToken) =>
+                {
+                    Assert.Equal(cancellationTokenSource.Token, cancellationToken);
+                    cancellationTokenSource.Cancel();
+                    return Task.FromCanceled(cancellationTokenSource.Token);
+                });
+
+            var sink = new TradeSinkS3Simple(
+                new TradeSinkS3SimpleOptions("my-bucket", "trades/raw", localRoot, TimeSpan.FromHours(1)),
+                uploaderMoq.Object,
+                CreateLogMoq().Object);
+            var instrument = Instrument.Parse("BTC-USDT");
+            var dispatchPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 11));
+
+            await WriteTradeFileAsync(dispatchPath, [CreateTrade("123", new DateTimeOffset(2026, 3, 11, 23, 59, 59, TimeSpan.Zero), 10m)]);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => sink.DispatchAsync(StubExchange, instrument, new DateOnly(2026, 3, 11), dispatchPath, cancellationTokenSource.Token).AsTask());
 
             Assert.True(File.Exists(dispatchPath));
         }
@@ -158,7 +228,8 @@ public sealed class TradeSinkS3SimpleTests
             var upload = Assert.Single(uploads);
             Assert.Equal("my-bucket", upload.BucketName);
             Assert.Equal("trades/raw/Stub/BTC-USDT/2026-03-12.141516789.jsonl", upload.ObjectKey);
-            Assert.Contains("\"tradeId\":\"123\"", upload.Payload, StringComparison.Ordinal);
+            Assert.True(upload.UsedTextUpload);
+            Assert.Contains("\"tradeId\":\"123\"", upload.FilePath, StringComparison.Ordinal);
             Assert.True(File.Exists(snapshotPath));
         }
         finally
@@ -217,8 +288,12 @@ public sealed class TradeSinkS3SimpleTests
         var capturedUploads = new List<UploadCall>();
         var uploaderMoq = new Mock<IS3ObjectUploader>();
         uploaderMoq
+            .Setup(mock => mock.UploadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((bucketName, objectKey, filePath, _) => capturedUploads.Add(new UploadCall(bucketName, objectKey, filePath, UsedTextUpload: false)))
+            .Returns(Task.CompletedTask);
+        uploaderMoq
             .Setup(mock => mock.UploadTextAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, CancellationToken>((bucketName, objectKey, payload, _) => capturedUploads.Add(new UploadCall(bucketName, objectKey, payload)))
+            .Callback<string, string, string, CancellationToken>((bucketName, objectKey, payload, _) => capturedUploads.Add(new UploadCall(bucketName, objectKey, payload, UsedTextUpload: true)))
             .Returns(Task.CompletedTask);
 
         uploads = capturedUploads;
@@ -263,5 +338,5 @@ public sealed class TradeSinkS3SimpleTests
         }
     }
 
-    private sealed record UploadCall(string BucketName, string ObjectKey, string Payload);
+    private sealed record UploadCall(string BucketName, string ObjectKey, string FilePath, bool UsedTextUpload);
 }

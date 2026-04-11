@@ -43,13 +43,12 @@ public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher, ITradeSna
         cancellationToken.ThrowIfCancellationRequested();
         _ = TradeLocalDailyFilePath.ValidateFinalized(_options.LocalRootDirectory, exchange, instrument, utcDate, finalizedFilePath);
 
-        var payload = await File.ReadAllTextAsync(finalizedFilePath, cancellationToken).ConfigureAwait(false);
         var objectKey = TradeSinkS3DailyObjectKey.Build(_options.Prefix, exchange.ToString(), instrument.ToString(), utcDate);
         _log.Info($"Trade S3 upload start: bucket={_options.BucketName}, objectKey={objectKey}, path={finalizedFilePath}.");
 
         try
         {
-            await _uploader.UploadTextAsync(_options.BucketName, objectKey, payload, cancellationToken).ConfigureAwait(false);
+            await _uploader.UploadFileAsync(_options.BucketName, objectKey, finalizedFilePath, cancellationToken).ConfigureAwait(false);
             _log.Info($"Trade S3 upload success: bucket={_options.BucketName}, objectKey={objectKey}.");
             File.Delete(finalizedFilePath);
             _log.Info($"Trade S3 local delete after upload: path={finalizedFilePath}.");
