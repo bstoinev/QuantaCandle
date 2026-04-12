@@ -28,9 +28,11 @@ public sealed class BinanceTradeGapFetchClientTests
             """);
 
         var fetchClient = new BinanceTradeGapFetchClient(httpClient);
+        var sink = new RecordingPageSink();
 
-        var result = await fetchClient.Fetch("BTC-USDT", 100, 102, CancellationToken.None);
+        await fetchClient.Fetch("BTC-USDT", 100, 102, sink, null, CancellationToken.None);
 
+        var result = sink.Trades;
         Assert.Equal(3, result.Count);
         Assert.Equal(["100", "101", "102"], result.Select(static trade => trade.Key.TradeId).ToArray());
         Assert.All(result, static trade => Assert.Equal("Binance", trade.Key.Exchange.ToString()));
@@ -42,10 +44,11 @@ public sealed class BinanceTradeGapFetchClientTests
     {
         using var httpClient = CreateHttpClient("[]");
         var fetchClient = new BinanceTradeGapFetchClient(httpClient);
+        var sink = new RecordingPageSink();
 
-        var result = await fetchClient.Fetch("BTC-USDT", 100, 102, CancellationToken.None);
+        await fetchClient.Fetch("BTC-USDT", 100, 102, sink, null, CancellationToken.None);
 
-        Assert.Empty(result);
+        Assert.Empty(sink.Trades);
     }
 
     [Fact]
@@ -59,8 +62,9 @@ public sealed class BinanceTradeGapFetchClientTests
             """);
 
         var fetchClient = new BinanceTradeGapFetchClient(httpClient);
+        var sink = new RecordingPageSink();
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await fetchClient.Fetch("BTC-USDT", 100, 102, CancellationToken.None));
+            async () => await fetchClient.Fetch("BTC-USDT", 100, 102, sink, null, CancellationToken.None));
 
         Assert.Contains("non-numeric 'id'", exception.Message, StringComparison.Ordinal);
     }
@@ -76,10 +80,11 @@ public sealed class BinanceTradeGapFetchClientTests
             """);
 
         var fetchClient = new BinanceTradeGapFetchClient(httpClient);
+        var sink = new RecordingPageSink();
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await fetchClient.Fetch("BTC-USDT", 100, 102, CancellationToken.None));
+            async () => await fetchClient.Fetch("BTC-USDT", 100, 102, sink, null, CancellationToken.None));
 
-        Assert.Contains("out-of-range trade id '103'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("out-of-range trade ID '103'", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -93,14 +98,15 @@ public sealed class BinanceTradeGapFetchClientTests
             """);
 
         var fetchClient = new BinanceTradeGapFetchClient(httpClient);
+        var sink = new RecordingPageSink();
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await fetchClient.Fetch("BTC-USDT", 100, 102, CancellationToken.None));
+            async () => await fetchClient.Fetch("BTC-USDT", 100, 102, sink, null, CancellationToken.None));
 
         Assert.Contains("unexpected symbol 'ETHUSDT'", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task FetchReturnsTradesInDeterministicOrder()
+    public async Task FetchRejectsUnexpectedUnorderedPayload()
     {
         using var httpClient = CreateHttpClient(
             """
@@ -112,10 +118,12 @@ public sealed class BinanceTradeGapFetchClientTests
             """);
 
         var fetchClient = new BinanceTradeGapFetchClient(httpClient);
+        var sink = new RecordingPageSink();
 
-        var result = await fetchClient.Fetch("BTC-USDT", 100, 102, CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await fetchClient.Fetch("BTC-USDT", 100, 102, sink, null, CancellationToken.None));
 
-        Assert.Equal(["100", "101", "102"], result.Select(static trade => trade.Key.TradeId).ToArray());
+        Assert.NotNull(exception);
     }
 
     private static HttpClient CreateHttpClient(string responsePayload)
@@ -145,5 +153,25 @@ public sealed class BinanceTradeGapFetchClientTests
         };
 
         return result;
+    }
+
+    /// <summary>
+    /// Records flattened fetched trades from each accepted page.
+    /// </summary>
+    private sealed class RecordingPageSink : ITradeGapFetchedPageSink
+    {
+        /// <summary>
+        /// Gets the flattened trades accepted by the sink.
+        /// </summary>
+        public List<TradeInfo> Trades { get; } = [];
+
+        /// <summary>
+        /// Stores the supplied page trades for later assertions.
+        /// </summary>
+        public ValueTask AcceptPage(IReadOnlyList<TradeInfo> pageTrades, CancellationToken cancellationToken)
+        {
+            Trades.AddRange(pageTrades);
+            return ValueTask.CompletedTask;
+        }
     }
 }

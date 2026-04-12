@@ -32,15 +32,14 @@ public sealed class LocalFileTradeGapHealer(
             var existingFiles = ResolveCandidateFiles(request);
             _log.Info($"Resolved {existingFiles.Count} candidate local trade file(s) for {request.Exchange}:{request.Symbol}.");
 
-            var fetchedTrades = await _tradeGapFetchClient
-                .Fetch(request.Symbol, request.MissingTradeIdStart, request.MissingTradeIdEnd, cancellationToken)
+            await using var splicer = new StreamingTradeGapSplicer(request, existingFiles, cancellationToken);
+            await _tradeGapFetchClient
+                .Fetch(request.Symbol, request.MissingTradeIdStart, request.MissingTradeIdEnd, splicer, request.ProgressReporter, cancellationToken)
                 .ConfigureAwait(false);
-            _log.Info($"Fetched {fetchedTrades.Count} trade(s) for requested gap {request.MissingTradeIdStart}-{request.MissingTradeIdEnd} on {request.Exchange}:{request.Symbol}.");
+            _log.Info($"Fetched {splicer.FetchedTradeCount} trade(s) for requested gap {request.MissingTradeIdStart}-{request.MissingTradeIdEnd} on {request.Exchange}:{request.Symbol}.");
 
-            var validatedFetchedTrades = ValidateFetchedTrades(fetchedTrades, request);
-            var warnings = BuildWarnings(validatedFetchedTrades, requestedRange);
-            var fetchedTradeBatch = PrepareFetchedTradesForSplice(validatedFetchedTrades);
-            var unresolvedTradeRanges = DetermineUnresolvedTradeRanges(fetchedTradeBatch, requestedRange);
+            var unresolvedTradeRanges = DetermineUnresolvedTradeRanges(splicer.FetchedRanges, request.RequestedMissingTradeRanges);
+            var warnings = BuildWarnings(unresolvedTradeRanges, request.RequestedMissingTradeRanges);
 
             foreach (var warning in warnings)
             {
@@ -49,9 +48,9 @@ public sealed class LocalFileTradeGapHealer(
 
             var insertedTradeCount = 0;
             IReadOnlyList<TradeGapAffectedFile> affectedFiles;
-            if (fetchedTradeBatch.Count > 0)
+            if (splicer.FetchedTradeCount > 0)
             {
-                var spliceResult = await SpliceFetchedTradesIntoLocalFiles(request, existingFiles, fetchedTradeBatch, cancellationToken).ConfigureAwait(false);
+                var spliceResult = await splicer.Complete().ConfigureAwait(false);
                 insertedTradeCount = spliceResult.InsertedTradeCount;
                 affectedFiles = spliceResult.AffectedFiles;
                 _log.Info($"Persisted {insertedTradeCount} inserted trade(s) across {affectedFiles.Count} file(s) for {request.Exchange}:{request.Symbol}.");
@@ -67,14 +66,14 @@ public sealed class LocalFileTradeGapHealer(
             var affectedRanges = request.AffectedRange is null ? Array.Empty<TradeGapAffectedRange>() : [request.AffectedRange];
             var hasFullRequestedCoverage = unresolvedTradeRanges.Count == 0;
             var outcome = DetermineOutcome(insertedTradeCount, hasFullRequestedCoverage);
-            _log.Info($"Finished trade gap healing for {request.Exchange}:{request.Symbol} with outcome {outcome}, fetched {validatedFetchedTrades.Count}, inserted {insertedTradeCount}, fullCoverage={hasFullRequestedCoverage}.");
+            _log.Info($"Finished trade gap healing for {request.Exchange}:{request.Symbol} with outcome {outcome}, fetched {splicer.FetchedTradeCount}, inserted {insertedTradeCount}, fullCoverage={hasFullRequestedCoverage}.");
 
             var result = new TradeGapHealResult(
                 request.Exchange,
                 request.Symbol,
                 outcome,
                 requestedRange,
-                validatedFetchedTrades.Count,
+                splicer.FetchedTradeCount,
                 insertedTradeCount,
                 hasFullRequestedCoverage,
                 unresolvedTradeRanges,
@@ -91,60 +90,56 @@ public sealed class LocalFileTradeGapHealer(
         }
     }
 
-    private static List<string> BuildWarnings(List<TradeInfo> fetchedTrades, MissingTradeIdRange requestedRange)
+    private static List<string> BuildWarnings(
+        IReadOnlyList<MissingTradeIdRange> unresolvedTradeRanges,
+        IReadOnlyList<MissingTradeIdRange> requestedMissingTradeRanges)
     {
         var result = new List<string>();
-        if (fetchedTrades.Count > 1)
+
+        if (unresolvedTradeRanges.Count > 0)
         {
-            var numericTradeIds = fetchedTrades
-                .Select(static trade => ParseNumericTradeId(trade.Key.TradeId, "Fetched trade id must be numeric."))
-                .Distinct()
-                .OrderBy(static tradeId => tradeId)
-                .ToArray();
-            if (numericTradeIds.Length > 1)
-            {
-                for (var index = 1; index < numericTradeIds.Length; index++)
-                {
-                    if (numericTradeIds[index] > numericTradeIds[index - 1] + 1)
-                    {
-                        result.Add($"Fetched batch contains an internal gap between trade ids {numericTradeIds[index - 1]} and {numericTradeIds[index]} within requested range {requestedRange.FirstTradeId}-{requestedRange.LastTradeId}.");
-                        break;
-                    }
-                }
-            }
+            var requestedRangeText = string.Join(", ", requestedMissingTradeRanges.Select(FormatRange));
+            var unresolvedRangeText = string.Join(", ", unresolvedTradeRanges.Select(FormatRange));
+            result.Add($"Fetched batch did not fully cover requested missing range(s) [{requestedRangeText}]. Unresolved range(s): [{unresolvedRangeText}].");
         }
 
         return result;
     }
 
     private static IReadOnlyList<MissingTradeIdRange> DetermineUnresolvedTradeRanges(
-        IReadOnlyList<FetchedTrade> fetchedTrades,
-        MissingTradeIdRange requestedRange)
+        IReadOnlyList<MissingTradeIdRange> fetchedRanges,
+        IReadOnlyList<MissingTradeIdRange> requestedRanges)
     {
         var result = new List<MissingTradeIdRange>();
-        var uniqueTradeIds = fetchedTrades
-            .Select(static trade => trade.NumericTradeId)
-            .Distinct()
-            .OrderBy(static tradeId => tradeId)
-            .ToArray();
-        var nextExpectedTradeId = requestedRange.FirstTradeId;
 
-        foreach (var tradeId in uniqueTradeIds)
+        foreach (var requestedRange in requestedRanges)
         {
-            if (tradeId > nextExpectedTradeId)
+            var nextExpectedTradeId = requestedRange.FirstTradeId;
+
+            foreach (var fetchedRange in fetchedRanges)
             {
-                result.Add(new MissingTradeIdRange(nextExpectedTradeId, tradeId - 1));
+                if (fetchedRange.LastTradeId < requestedRange.FirstTradeId)
+                {
+                    continue;
+                }
+
+                if (fetchedRange.FirstTradeId > requestedRange.LastTradeId)
+                {
+                    break;
+                }
+
+                if (fetchedRange.FirstTradeId > nextExpectedTradeId)
+                {
+                    result.Add(new MissingTradeIdRange(nextExpectedTradeId, fetchedRange.FirstTradeId - 1));
+                }
+
+                nextExpectedTradeId = Math.Max(nextExpectedTradeId, fetchedRange.LastTradeId + 1);
             }
 
-            if (tradeId >= nextExpectedTradeId)
+            if (nextExpectedTradeId <= requestedRange.LastTradeId)
             {
-                nextExpectedTradeId = tradeId + 1;
+                result.Add(new MissingTradeIdRange(nextExpectedTradeId, requestedRange.LastTradeId));
             }
-        }
-
-        if (nextExpectedTradeId <= requestedRange.LastTradeId)
-        {
-            result.Add(new MissingTradeIdRange(nextExpectedTradeId, requestedRange.LastTradeId));
         }
 
         return result;
@@ -157,68 +152,6 @@ public sealed class LocalFileTradeGapHealer(
         if (insertedTradeCount > 0)
         {
             result = hasFullRequestedCoverage ? TradeGapHealStatus.Full : TradeGapHealStatus.Partial;
-        }
-
-        return result;
-    }
-
-    private static List<FetchedTrade> PrepareFetchedTradesForSplice(IReadOnlyList<TradeInfo> fetchedTrades)
-    {
-        var result = fetchedTrades
-            .Select(static trade => new FetchedTrade(
-                trade,
-                ParseNumericTradeId(trade.Key.TradeId, "Fetched trade id must be numeric.")))
-            .OrderBy(static trade => trade.NumericTradeId)
-            .ThenBy(static trade => trade.Trade.Timestamp.ToUniversalTime())
-            .ToList();
-
-        for (var index = 1; index < result.Count; index++)
-        {
-            if (result[index].NumericTradeId == result[index - 1].NumericTradeId)
-            {
-                throw new InvalidOperationException($"Fetched batch contains duplicate trade id '{result[index].NumericTradeId}'.");
-            }
-        }
-
-        return result;
-    }
-
-    private static List<TradeInfo> ValidateFetchedTrades(IReadOnlyList<TradeInfo> fetchedTrades, TradeGapHealRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(fetchedTrades);
-
-        var result = new List<TradeInfo>(fetchedTrades.Count);
-        foreach (var fetchedTrade in fetchedTrades)
-        {
-            var tradeId = ParseNumericTradeId(fetchedTrade.Key.TradeId, "Fetched trade id must be numeric.");
-
-            if (!fetchedTrade.Key.Exchange.Value.Equals(request.Exchange.Value, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    FormattableString.Invariant(
-                        $"Fetched trade '{fetchedTrade.Key.TradeId}' returned exchange '{fetchedTrade.Key.Exchange.Value}' instead of '{request.Exchange.Value}'."));
-            }
-
-            if (!fetchedTrade.Key.Symbol.Equals(request.Symbol))
-            {
-                throw new InvalidOperationException(
-                    FormattableString.Invariant(
-                        $"Fetched trade '{fetchedTrade.Key.TradeId}' returned instrument '{fetchedTrade.Key.Symbol}' instead of '{request.Symbol}'."));
-            }
-
-            if (tradeId < request.MissingTradeIdStart || tradeId > request.MissingTradeIdEnd)
-            {
-                throw new InvalidOperationException(
-                    FormattableString.Invariant(
-                        $"Fetched trade '{tradeId}' is out of requested range {request.MissingTradeIdStart}-{request.MissingTradeIdEnd}."));
-            }
-
-            result.Add(
-                new TradeInfo(
-                    new TradeKey(request.Exchange, request.Symbol, tradeId.ToString(CultureInfo.InvariantCulture)),
-                    fetchedTrade.Timestamp.ToUniversalTime(),
-                    fetchedTrade.Price,
-                    fetchedTrade.Quantity));
         }
 
         return result;
@@ -251,6 +184,39 @@ public sealed class LocalFileTradeGapHealer(
             }
         }
 
+        return result;
+    }
+
+    private static TradeInfo ValidateFetchedTrade(TradeInfo fetchedTrade, TradeGapHealRequest request)
+    {
+        var tradeId = ParseNumericTradeId(fetchedTrade.Key.TradeId, "Fetched trade id must be numeric.");
+
+        if (!fetchedTrade.Key.Exchange.Value.Equals(request.Exchange.Value, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                FormattableString.Invariant(
+                    $"Fetched trade '{fetchedTrade.Key.TradeId}' returned exchange '{fetchedTrade.Key.Exchange.Value}' instead of '{request.Exchange.Value}'."));
+        }
+
+        if (!fetchedTrade.Key.Symbol.Equals(request.Symbol))
+        {
+            throw new InvalidOperationException(
+                FormattableString.Invariant(
+                    $"Fetched trade '{fetchedTrade.Key.TradeId}' returned instrument '{fetchedTrade.Key.Symbol}' instead of '{request.Symbol}'."));
+        }
+
+        if (tradeId < request.MissingTradeIdStart || tradeId > request.MissingTradeIdEnd)
+        {
+            throw new InvalidOperationException(
+                FormattableString.Invariant(
+                    $"Fetched trade '{tradeId}' is out of requested range {request.MissingTradeIdStart}-{request.MissingTradeIdEnd}."));
+        }
+
+        var result = new TradeInfo(
+            new TradeKey(request.Exchange, request.Symbol, tradeId.ToString(CultureInfo.InvariantCulture)),
+            fetchedTrade.Timestamp.ToUniversalTime(),
+            fetchedTrade.Price,
+            fetchedTrade.Quantity);
         return result;
     }
 
@@ -378,71 +344,28 @@ public sealed class LocalFileTradeGapHealer(
         return result;
     }
 
-    private static async Task<SpliceResult> SpliceFetchedTradesIntoLocalFiles(
-        TradeGapHealRequest request,
-        IReadOnlyList<ResolvedFile> existingFiles,
-        IReadOnlyList<FetchedTrade> fetchedTrades,
-        CancellationToken cancellationToken)
+    private static void EnsureFetchedTradeMatchesLocalTrade(
+        TradeInfo fetchedTrade,
+        TradeInfo localTrade,
+        string fullPath,
+        int lineNumber)
     {
-        var outputWriter = new SpliceOutputWriter(request, existingFiles);
-        var insertedTradeCount = 0;
-        var fetchedTradeIndex = 0;
-
-        try
+        if (fetchedTrade.Timestamp.ToUniversalTime() != localTrade.Timestamp.ToUniversalTime()
+            || fetchedTrade.Price != localTrade.Price
+            || fetchedTrade.Quantity != localTrade.Quantity)
         {
-            foreach (var existingFile in existingFiles.OrderBy(static file => file.RelativePath, StringComparer.Ordinal))
-            {
-                var lineNumber = 0;
-                await foreach (var line in File.ReadLinesAsync(existingFile.FullPath, cancellationToken).ConfigureAwait(false))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    lineNumber++;
-                    if (string.IsNullOrWhiteSpace(line))
-                    {
-                        continue;
-                    }
-
-                    var localTrade = ParseExistingTrade(line, request, existingFile.FullPath, lineNumber);
-                    var localTradeId = ParseNumericTradeId(
-                        localTrade.Key.TradeId,
-                        FormattableString.Invariant($"TradeId '{localTrade.Key.TradeId}' at line {lineNumber} in '{existingFile.FullPath}' is not numeric."));
-
-                    while (fetchedTradeIndex < fetchedTrades.Count && fetchedTrades[fetchedTradeIndex].NumericTradeId < localTradeId)
-                    {
-                        await outputWriter.WriteTrade(fetchedTrades[fetchedTradeIndex].Trade, cancellationToken).ConfigureAwait(false);
-                        insertedTradeCount++;
-                        fetchedTradeIndex++;
-                    }
-
-                    if (fetchedTradeIndex < fetchedTrades.Count && fetchedTrades[fetchedTradeIndex].NumericTradeId == localTradeId)
-                    {
-                        throw new InvalidOperationException(
-                            FormattableString.Invariant(
-                                $"Fetched trade id '{localTradeId}' overlaps existing local trade id in '{existingFile.FullPath}' at line {lineNumber}."));
-                    }
-
-                    await outputWriter.WriteTrade(localTrade, cancellationToken).ConfigureAwait(false);
-                }
-            }
-
-            while (fetchedTradeIndex < fetchedTrades.Count)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await outputWriter.WriteTrade(fetchedTrades[fetchedTradeIndex].Trade, cancellationToken).ConfigureAwait(false);
-                insertedTradeCount++;
-                fetchedTradeIndex++;
-            }
-
-            var affectedFiles = await outputWriter.Commit().ConfigureAwait(false);
-            var result = new SpliceResult(insertedTradeCount, affectedFiles);
-            return result;
+            throw new InvalidOperationException(
+                FormattableString.Invariant(
+                    $"Fetched trade id '{localTrade.Key.TradeId}' conflicts with existing local trade data in '{fullPath}' at line {lineNumber}."));
         }
-        catch
-        {
-            await outputWriter.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
+    }
+
+    private static string FormatRange(MissingTradeIdRange range)
+    {
+        var result = range.FirstTradeId == range.LastTradeId
+            ? range.FirstTradeId.ToString(CultureInfo.InvariantCulture)
+            : $"{range.FirstTradeId}-{range.LastTradeId}";
+        return result;
     }
 
     private static Task ReplaceFilesAsync(IReadOnlyList<StagedFile> stagedFiles)
@@ -528,11 +451,6 @@ public sealed class LocalFileTradeGapHealer(
     private sealed record ResolvedFile(string FullPath, string RelativePath, DateOnly? TradingDay);
 
     /// <summary>
-    /// Represents one fetched trade prepared for numeric splice ordering.
-    /// </summary>
-    private sealed record FetchedTrade(TradeInfo Trade, long NumericTradeId);
-
-    /// <summary>
     /// Represents one staged temp file and its associated rollback backup path.
     /// </summary>
     private sealed record StagedFile(string RelativePath, string FullPath, DateOnly? TradingDay, string TempPath, string BackupPath);
@@ -546,6 +464,235 @@ public sealed class LocalFileTradeGapHealer(
     /// Represents one splice operation result.
     /// </summary>
     private sealed record SpliceResult(int InsertedTradeCount, IReadOnlyList<TradeGapAffectedFile> AffectedFiles);
+
+    /// <summary>
+    /// Represents one parsed local trade and its source location.
+    /// </summary>
+    private sealed record ParsedLocalTrade(TradeInfo Trade, long NumericTradeId, string FullPath, int LineNumber);
+
+    /// <summary>
+    /// Streams fetched trade pages directly into staged output while preserving global trade identifier order.
+    /// </summary>
+    private sealed class StreamingTradeGapSplicer : ITradeGapFetchedPageSink, IAsyncDisposable
+    {
+        private readonly CancellationToken _cancellationToken;
+        private readonly IReadOnlyList<ResolvedFile> _existingFiles;
+        private readonly SpliceOutputWriter _outputWriter;
+        private readonly TradeGapHealRequest _request;
+        private IAsyncEnumerator<string>? _currentFileEnumerator;
+        private ResolvedFile? _currentFile;
+        private ParsedLocalTrade? _currentLocalTrade;
+        private int _currentLineNumber;
+        private int _existingFileIndex;
+        private int _insertedTradeCount;
+        private long? _lastFetchedTradeId;
+
+        public StreamingTradeGapSplicer(TradeGapHealRequest request, IReadOnlyList<ResolvedFile> existingFiles, CancellationToken cancellationToken)
+        {
+            _request = request ?? throw new ArgumentNullException(nameof(request));
+            _existingFiles = (existingFiles ?? throw new ArgumentNullException(nameof(existingFiles)))
+                .OrderBy(static file => file.RelativePath, StringComparer.Ordinal)
+                .ToList();
+            _cancellationToken = cancellationToken;
+            _outputWriter = new SpliceOutputWriter(request, _existingFiles);
+            FetchedRanges = new List<MissingTradeIdRange>();
+        }
+
+        /// <summary>
+        /// Gets the fetched trade count observed across all accepted pages.
+        /// </summary>
+        public int FetchedTradeCount { get; private set; }
+
+        /// <summary>
+        /// Gets the merged fetched trade identifier ranges observed during streaming.
+        /// </summary>
+        public List<MissingTradeIdRange> FetchedRanges { get; }
+
+        /// <summary>
+        /// Accepts one downloaded page and splices it into staged output immediately.
+        /// </summary>
+        public async ValueTask AcceptPage(IReadOnlyList<TradeInfo> pageTrades, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(pageTrades);
+
+            foreach (var pageTrade in pageTrades)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var normalizedTrade = ValidateFetchedTrade(pageTrade, _request);
+                var fetchedTradeId = ParseNumericTradeId(normalizedTrade.Key.TradeId, "Fetched trade id must be numeric.");
+
+                ObserveFetchedTradeId(fetchedTradeId);
+                FetchedTradeCount++;
+
+                while (await EnsureCurrentLocalTradeLoaded().ConfigureAwait(false)
+                    && _currentLocalTrade!.NumericTradeId < fetchedTradeId)
+                {
+                    await _outputWriter.WriteTrade(_currentLocalTrade.Trade, cancellationToken).ConfigureAwait(false);
+                    _currentLocalTrade = null;
+                }
+
+                if (await EnsureCurrentLocalTradeLoaded().ConfigureAwait(false)
+                    && _currentLocalTrade!.NumericTradeId == fetchedTradeId)
+                {
+                    EnsureFetchedTradeMatchesLocalTrade(
+                        normalizedTrade,
+                        _currentLocalTrade.Trade,
+                        _currentLocalTrade.FullPath,
+                        _currentLocalTrade.LineNumber);
+                    await _outputWriter.WriteTrade(_currentLocalTrade.Trade, cancellationToken).ConfigureAwait(false);
+                    _currentLocalTrade = null;
+                }
+                else
+                {
+                    await _outputWriter.WriteTrade(normalizedTrade, cancellationToken).ConfigureAwait(false);
+                    _insertedTradeCount++;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Finalizes the staged output after all pages have been consumed.
+        /// </summary>
+        public async Task<SpliceResult> Complete()
+        {
+            while (await EnsureCurrentLocalTradeLoaded().ConfigureAwait(false))
+            {
+                await _outputWriter.WriteTrade(_currentLocalTrade!.Trade, _cancellationToken).ConfigureAwait(false);
+                _currentLocalTrade = null;
+            }
+
+            var affectedFiles = await _outputWriter.Commit().ConfigureAwait(false);
+            var result = new SpliceResult(_insertedTradeCount, affectedFiles);
+            return result;
+        }
+
+        /// <summary>
+        /// Releases any open reader or staged output resources.
+        /// </summary>
+        public async ValueTask DisposeAsync()
+        {
+            if (_currentFileEnumerator is not null)
+            {
+                await _currentFileEnumerator.DisposeAsync().ConfigureAwait(false);
+                _currentFileEnumerator = null;
+            }
+
+            await _outputWriter.DisposeAsync().ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Ensures the next local trade is loaded if one remains.
+        /// </summary>
+        private async Task<bool> EnsureCurrentLocalTradeLoaded()
+        {
+            var result = true;
+
+            if (_currentLocalTrade is null)
+            {
+                while (true)
+                {
+                    if (_currentFileEnumerator is null)
+                    {
+                        result = await OpenNextFile().ConfigureAwait(false);
+                        if (!result)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (!await _currentFileEnumerator!.MoveNextAsync().ConfigureAwait(false))
+                    {
+                        await _currentFileEnumerator.DisposeAsync().ConfigureAwait(false);
+                        _currentFileEnumerator = null;
+                        _currentFile = null;
+                        _currentLineNumber = 0;
+                        continue;
+                    }
+
+                    _currentLineNumber++;
+                    var line = _currentFileEnumerator.Current;
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        continue;
+                    }
+
+                    var localTrade = ParseExistingTrade(line, _request, _currentFile!.FullPath, _currentLineNumber);
+                    var localTradeId = ParseNumericTradeId(
+                        localTrade.Key.TradeId,
+                        FormattableString.Invariant($"TradeId '{localTrade.Key.TradeId}' at line {_currentLineNumber} in '{_currentFile.FullPath}' is not numeric."));
+                    _currentLocalTrade = new ParsedLocalTrade(localTrade, localTradeId, _currentFile.FullPath, _currentLineNumber);
+                    break;
+                }
+            }
+
+            return result && _currentLocalTrade is not null;
+        }
+
+        /// <summary>
+        /// Opens the next local file reader when one remains.
+        /// </summary>
+        private Task<bool> OpenNextFile()
+        {
+            var result = false;
+
+            if (_existingFileIndex < _existingFiles.Count)
+            {
+                while (_existingFileIndex < _existingFiles.Count)
+                {
+                    var nextIndex = _existingFileIndex;
+                    _existingFileIndex++;
+                    if (nextIndex >= _existingFiles.Count)
+                    {
+                        break;
+                    }
+
+                    _currentFile = _existingFiles[nextIndex];
+                    _currentFileEnumerator = File.ReadLinesAsync(_currentFile.FullPath, _cancellationToken).GetAsyncEnumerator(_cancellationToken);
+                    _currentLineNumber = 0;
+                    result = true;
+                    break;
+                }
+            }
+
+            return Task.FromResult(result);
+        }
+
+        /// <summary>
+        /// Tracks fetched identifier coverage without storing all fetched trades.
+        /// </summary>
+        private void ObserveFetchedTradeId(long fetchedTradeId)
+        {
+            if (_lastFetchedTradeId is not null && fetchedTradeId == _lastFetchedTradeId.Value)
+            {
+                throw new InvalidOperationException($"Fetched batch contains duplicate trade id '{fetchedTradeId}'.");
+            }
+
+            if (_lastFetchedTradeId is not null && fetchedTradeId < _lastFetchedTradeId.Value)
+            {
+                throw new InvalidOperationException(
+                    $"Fetched trade id '{fetchedTradeId}' is not strictly ascending after '{_lastFetchedTradeId.Value}'.");
+            }
+
+            _lastFetchedTradeId = fetchedTradeId;
+
+            if (FetchedRanges.Count == 0)
+            {
+                FetchedRanges.Add(new MissingTradeIdRange(fetchedTradeId, fetchedTradeId));
+            }
+            else
+            {
+                var previousRange = FetchedRanges[^1];
+                if (fetchedTradeId == previousRange.LastTradeId + 1)
+                {
+                    FetchedRanges[^1] = new MissingTradeIdRange(previousRange.FirstTradeId, fetchedTradeId);
+                }
+                else
+                {
+                    FetchedRanges.Add(new MissingTradeIdRange(fetchedTradeId, fetchedTradeId));
+                }
+            }
+        }
+    }
 
     /// <summary>
     /// Streams spliced JSONL output into staged temp files by UTC day.

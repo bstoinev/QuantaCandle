@@ -237,7 +237,7 @@ public sealed class QuantaCandleRunnerTests
     }
 
     [Fact]
-    public async Task HealDispatchesBoundaryAndInteriorGapsAsExactRanges()
+    public async Task HealDispatchesBoundaryAndInteriorGapsAsSingleEnvelopePass()
     {
         var workDirectory = CreateTempRoot();
         var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
@@ -317,14 +317,14 @@ public sealed class QuantaCandleRunnerTests
                 CancellationToken.None);
 
             Assert.Equal(0, exitCode);
-            Assert.Equal(3, healRequests.Count);
-            Assert.Equal([100L, 103L, 105L], healRequests.Select(static request => request.MissingTradeIdStart).ToArray());
-            Assert.Equal([101L, 103L, 106L], healRequests.Select(static request => request.MissingTradeIdEnd).ToArray());
-            Assert.All(healRequests, request =>
-            {
-                var candidateFile = Assert.Single(request.CandidateFiles);
-                Assert.Equal(relativePath, candidateFile.Path);
-            });
+            var request = Assert.Single(healRequests);
+            Assert.Equal(100L, request.MissingTradeIdStart);
+            Assert.Equal(106L, request.MissingTradeIdEnd);
+            Assert.Equal([100L, 103L, 105L], request.RequestedMissingTradeRanges.Select(static range => range.FirstTradeId).ToArray());
+            Assert.Equal([101L, 103L, 106L], request.RequestedMissingTradeRanges.Select(static range => range.LastTradeId).ToArray());
+            var candidateFile = Assert.Single(request.CandidateFiles);
+            Assert.Equal(relativePath, candidateFile.Path);
+            Assert.Contains("Pass 1/1:", outputWriter.ToString(), StringComparison.Ordinal);
         }
         finally
         {

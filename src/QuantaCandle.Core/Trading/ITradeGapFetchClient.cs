@@ -6,7 +6,13 @@ namespace QuantaCandle.Core.Trading;
 public interface ITradeGapFetchClient
 {
     /// <summary>
-    /// Fetches trades for the requested instrument and inclusive missing trade identifier range.
+    /// Fetches trades for the requested instrument and forwards each downloaded page immediately to the supplied sink.
     /// </summary>
-    ValueTask<IReadOnlyList<TradeInfo>> Fetch(Instrument instrument, long missingTradeIdStart, long missingTradeIdEnd, CancellationToken cancellationToken);
+    ValueTask Fetch(
+        Instrument instrument,
+        long missingTradeIdStart,
+        long missingTradeIdEnd,
+        ITradeGapFetchedPageSink pageSink,
+        ITradeGapProgressReporter? progressReporter,
+        CancellationToken cancellationToken);
 }

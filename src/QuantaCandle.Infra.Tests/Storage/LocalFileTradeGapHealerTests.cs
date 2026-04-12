@@ -76,7 +76,7 @@ public sealed class LocalFileTradeGapHealerTests
             await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(104)]);
 
             var healer = new LocalFileTradeGapHealer(
-                new StubTradeGapFetchClient([CreateTrade(103), CreateTrade(101), CreateTrade(102)]),
+                new StubTradeGapFetchClient([CreateTrade(101), CreateTrade(102), CreateTrade(103)]),
                 CreateLog());
             var result = await healer.Heal(CreateRequest(rootDirectory, 101, 103, relativePath), CancellationToken.None);
 
@@ -149,24 +149,24 @@ public sealed class LocalFileTradeGapHealerTests
     }
 
     [Fact]
-    public async Task EqualFetchedAndLocalTradeIdFailsLoudly()
+    public async Task EqualFetchedAndLocalTradeIdIsTreatedAsExpectedOverlap()
     {
         var rootDirectory = CreateRootDirectory();
         try
         {
             var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
             await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(103)]);
-            var originalContents = await File.ReadAllTextAsync(Path.Combine(rootDirectory, relativePath), CancellationToken.None);
 
             var healer = new LocalFileTradeGapHealer(
                 new StubTradeGapFetchClient([CreateTrade(101), CreateTrade(103)]),
                 CreateLog());
-            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-                async () => await healer.Heal(CreateRequest(rootDirectory, 101, 103, relativePath), CancellationToken.None));
+            var result = await healer.Heal(CreateRequest(rootDirectory, 101, 103, relativePath), CancellationToken.None);
 
-            Assert.Contains("overlaps existing local trade id", exception.Message, StringComparison.Ordinal);
-            var currentContents = await File.ReadAllTextAsync(Path.Combine(rootDirectory, relativePath), CancellationToken.None);
-            Assert.Equal(originalContents, currentContents);
+            Assert.Equal(TradeGapHealStatus.Partial, result.Outcome);
+            Assert.Equal(1, result.InsertedTradeCount);
+            Assert.Equal([102L], [result.UnresolvedTradeRanges[0].FirstTradeId]);
+            var trades = await ReadTradesAsync(rootDirectory, relativePath);
+            Assert.Equal(["100", "101", "103"], trades.Select(static trade => trade.Key.TradeId).ToArray());
         }
         finally
         {
@@ -200,6 +200,41 @@ public sealed class LocalFileTradeGapHealerTests
     }
 
     [Fact]
+    public async Task MultipleGapsCanBeHealedInOneEnvelopePass()
+    {
+        var rootDirectory = CreateRootDirectory();
+        try
+        {
+            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(102), CreateTrade(104)]);
+
+            var healer = new LocalFileTradeGapHealer(
+                new StubTradeGapFetchClient([CreateTrade(100), CreateTrade(101), CreateTrade(102), CreateTrade(103), CreateTrade(104), CreateTrade(105), CreateTrade(106)]),
+                CreateLog());
+            var result = await healer.Heal(
+                CreateRequest(
+                    rootDirectory,
+                    100,
+                    106,
+                    relativePath,
+                    [new MissingTradeIdRange(100, 101), new MissingTradeIdRange(103, 103), new MissingTradeIdRange(105, 106)]),
+                CancellationToken.None);
+
+            Assert.Equal(TradeGapHealStatus.Full, result.Outcome);
+            Assert.Equal(7, result.FetchedTradeCount);
+            Assert.Equal(5, result.InsertedTradeCount);
+            Assert.Empty(result.UnresolvedTradeRanges);
+
+            var trades = await ReadTradesAsync(rootDirectory, relativePath);
+            Assert.Equal(["100", "101", "102", "103", "104", "105", "106"], trades.Select(static trade => trade.Key.TradeId).ToArray());
+        }
+        finally
+        {
+            DeleteRootDirectory(rootDirectory);
+        }
+    }
+
+    [Fact]
     public async Task FetchedBatchInternalGapProducesWarningWithoutFailingHeal()
     {
         var rootDirectory = CreateRootDirectory();
@@ -214,7 +249,7 @@ public sealed class LocalFileTradeGapHealerTests
             var result = await healer.Heal(CreateRequest(rootDirectory, 101, 105, relativePath), CancellationToken.None);
 
             Assert.Equal(TradeGapHealStatus.Partial, result.Outcome);
-            Assert.Contains(result.Warnings, static warning => warning.Contains("internal gap", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(result.Warnings, static warning => warning.Contains("Unresolved range(s): [102, 105]", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -238,6 +273,34 @@ public sealed class LocalFileTradeGapHealerTests
                 async () => await healer.Heal(CreateRequest(rootDirectory, 101, 102, relativePath), CancellationToken.None));
 
             Assert.Contains("duplicate trade id", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteRootDirectory(rootDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task ConflictingOverlapTradeFailsLoudly()
+    {
+        var rootDirectory = CreateRootDirectory();
+        try
+        {
+            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(103)]);
+            var conflictingTrade = new TradeInfo(
+                new TradeKey(BinanceExchange, Instrument.Parse("BTC-USDT"), "103"),
+                CreateTimestamp(103),
+                999m,
+                1m);
+
+            var healer = new LocalFileTradeGapHealer(
+                new StubTradeGapFetchClient([CreateTrade(101), CreateTrade(102), conflictingTrade]),
+                CreateLog());
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => await healer.Heal(CreateRequest(rootDirectory, 101, 103, relativePath), CancellationToken.None));
+
+            Assert.Contains("conflicts with existing local trade data", exception.Message, StringComparison.Ordinal);
         }
         finally
         {
@@ -284,7 +347,12 @@ public sealed class LocalFileTradeGapHealerTests
         Assert.DoesNotContain("MergeTrades(", source, StringComparison.Ordinal);
     }
 
-    private static TradeGapHealRequest CreateRequest(string rootDirectory, long missingTradeIdStart, long missingTradeIdEnd, string relativePath)
+    private static TradeGapHealRequest CreateRequest(
+        string rootDirectory,
+        long missingTradeIdStart,
+        long missingTradeIdEnd,
+        string relativePath,
+        IReadOnlyList<MissingTradeIdRange>? requestedMissingTradeRanges = null)
     {
         var affectedFile = new TradeGapAffectedFile(relativePath, new DateOnly(2026, 3, 28));
         var affectedRange = new TradeGapAffectedRange(
@@ -292,7 +360,7 @@ public sealed class LocalFileTradeGapHealerTests
             new TradeWatermark((missingTradeIdEnd + 1).ToString(), CreateTimestamp(missingTradeIdEnd + 1)),
             new TradeGapBoundaryLocation(relativePath, 1),
             new TradeGapBoundaryLocation(relativePath, 2));
-        return new TradeGapHealRequest(rootDirectory, BinanceExchange, Instrument.Parse("BTC-USDT"), missingTradeIdStart, missingTradeIdEnd, [affectedFile], affectedRange);
+        return new TradeGapHealRequest(rootDirectory, BinanceExchange, Instrument.Parse("BTC-USDT"), missingTradeIdStart, missingTradeIdEnd, [affectedFile], affectedRange, requestedMissingTradeRanges);
     }
 
     private static TradeInfo CreateTrade(long tradeId)
@@ -372,10 +440,15 @@ public sealed class LocalFileTradeGapHealerTests
         /// <summary>
         /// Returns the configured fetched trade batch without additional processing.
         /// </summary>
-        public ValueTask<IReadOnlyList<TradeInfo>> Fetch(Instrument instrument, long missingTradeIdStart, long missingTradeIdEnd, CancellationToken cancellationToken)
+        public async ValueTask Fetch(
+            Instrument instrument,
+            long missingTradeIdStart,
+            long missingTradeIdEnd,
+            ITradeGapFetchedPageSink pageSink,
+            ITradeGapProgressReporter? progressReporter,
+            CancellationToken cancellationToken)
         {
-            IReadOnlyList<TradeInfo> result = _trades;
-            return ValueTask.FromResult(result);
+            await pageSink.AcceptPage(_trades, cancellationToken);
         }
     }
 }

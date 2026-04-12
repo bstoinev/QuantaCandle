@@ -18,18 +18,37 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
     /// <summary>
     /// Fetches normalized trade items for the requested bounded trade identifier range.
     /// </summary>
-    public async ValueTask<IReadOnlyList<TradeInfo>> Fetch(Instrument instrument, long startId, long endId, CancellationToken terminator)
+    public async ValueTask Fetch(
+        Instrument instrument,
+        long startId,
+        long endId,
+        ITradeGapFetchedPageSink pageSink,
+        ITradeGapProgressReporter? progressReporter,
+        CancellationToken terminator)
     {
         ValidateRequestedRange(startId, endId);
+        ArgumentNullException.ThrowIfNull(pageSink);
 
         var requestedSymbol = BinanceSymbol.ToRestSymbol(instrument);
-        var result = new List<TradeInfo>();
         var nextTradeId = startId;
+        var expectedTradeCount = endId - startId + 1;
+        var pageNumber = 0;
+        long completedTradeCount = 0;
+
+        if (progressReporter is not null)
+        {
+            await progressReporter
+                .Report(
+                    new TradeGapProgressUpdate("starting", 0, expectedTradeCount, 0, false),
+                    terminator)
+                .ConfigureAwait(false);
+        }
 
         while (nextTradeId <= endId)
         {
             var remainingTradeCount = endId - nextTradeId + 1;
             var requestLimit = (int)Math.Min(BinanceHelper.MAX_TRADES_PER_REQUEST, remainingTradeCount);
+            pageNumber++;
 
             using var request = CreateRequest(requestedSymbol, nextTradeId, requestLimit);
             using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, terminator).ConfigureAwait(false);
@@ -44,26 +63,33 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
                 break;
             }
 
-            result.AddRange(pageTrades);
+            await pageSink.AcceptPage(pageTrades, terminator).ConfigureAwait(false);
             nextTradeId = BinanceHelper.GetTradeId(pageTrades[^1]) + 1;
-        }
-        var firstId = BinanceHelper.GetTradeId(result[0]);
-        var lastId = BinanceHelper.GetTradeId(result[^1]);
+            completedTradeCount += pageTrades.Count;
 
-        if (firstId != startId)
-        {
-            throw new Exception($"Unexpected first trade ID of '{firstId}' is returned by the exchange. Expected '{startId}'.");
-        }
-        else if (lastId != endId)
-        {
-            throw new Exception($"Unexpected last trade ID of '{lastId}' is returned by the exchange. Expected '{endId}'.");
-        }
-        else if (lastId != startId + result.Count - 1)
-        {
-            throw new Exception($"Unexpected trade sequence retruned by the exchange. First ID is '{firstId}', last ID is '{lastId}', but expected {endId - startId + 1} trades.");
+            if (progressReporter is not null)
+            {
+                await progressReporter
+                    .Report(
+                        new TradeGapProgressUpdate("downloading", completedTradeCount, expectedTradeCount, pageNumber, false),
+                        terminator)
+                    .ConfigureAwait(false);
+            }
         }
 
-        return result;
+        if (progressReporter is not null)
+        {
+            await progressReporter
+                .Report(
+                    new TradeGapProgressUpdate(
+                        completedTradeCount == expectedTradeCount ? "complete" : "partial",
+                        completedTradeCount,
+                        expectedTradeCount,
+                        pageNumber,
+                        true),
+                    terminator)
+                .ConfigureAwait(false);
+        }
     }
 
     private HttpRequestMessage CreateRequest(string requestedSymbol, long fromTradeId, int requestLimit)
