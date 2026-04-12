@@ -3,10 +3,22 @@ using QuantaCandle.Infra;
 
 namespace QuantaCandle.CLI;
 
-internal class QuantaCandleRunner(ITradeGapScanner gapScanner, ITradeGapHealer gapHealer) : IQuantaCandleRunner
+internal class QuantaCandleRunner(
+    ITradeGapScanner gapScanner,
+    ITradeGapHealer gapHealer,
+    ITradeGapScanAugmenter tradeGapScanAugmenter) : IQuantaCandleRunner
 {
+    private enum ScanGapKind
+    {
+        Interior = 1,
+        StartBoundary = 2,
+        EndBoundary = 3,
+        Unknown = 4,
+    }
+
     private readonly ITradeGapScanner _gapScanner = gapScanner ?? throw new ArgumentNullException(nameof(gapScanner));
     private readonly ITradeGapHealer _gapHealer = gapHealer ?? throw new ArgumentNullException(nameof(gapHealer));
+    private readonly ITradeGapScanAugmenter _tradeGapScanAugmenter = tradeGapScanAugmenter ?? throw new ArgumentNullException(nameof(tradeGapScanAugmenter));
 
     public async Task<int> Candlize(CliOptions runOptions, TextWriter outputWriter, CancellationToken cancellationToken)
     {
@@ -95,8 +107,12 @@ internal class QuantaCandleRunner(ITradeGapScanner gapScanner, ITradeGapHealer g
         var tradeRootDirectory = GetTradeRootDirectory(runOptions);
         var candidateFileResolution = ResolveCandidateFiles(tradeRootDirectory, runOptions.Exchange, runOptions.Instrument, runOptions.Dates);
         EnsureRequestedDatesWereResolved(runOptions, tradeRootDirectory, candidateFileResolution);
+        var scanRequest = new TradeGapScanRequest(tradeRootDirectory, candidateFileResolution.ResolvedFiles, []);
         var scanResult = await _gapScanner
-            .Scan(new TradeGapScanRequest(tradeRootDirectory, candidateFileResolution.ResolvedFiles, []), terminator)
+            .Scan(scanRequest, terminator)
+            .ConfigureAwait(false);
+        scanResult = await _tradeGapScanAugmenter
+            .Augment(scanRequest, scanResult, terminator)
             .ConfigureAwait(false);
         var requestedExchange = new ExchangeId(runOptions.Exchange);
         var requestedInstrument = Instrument.Parse(runOptions.Instrument);
@@ -105,6 +121,7 @@ internal class QuantaCandleRunner(ITradeGapScanner gapScanner, ITradeGapHealer g
         await outputWriter.WriteLineAsync($"Files scanned:".PadLeft(20) + scanResult.TotalFilesScanned).ConfigureAwait(false);
         await outputWriter.WriteLineAsync($"Trades scanned:".PadLeft(20) + scanResult.TotalTradesScanned).ConfigureAwait(false);
         await outputWriter.WriteLineAsync($"Gaps found:".PadLeft(20) + filteredGaps.Count).ConfigureAwait(false);
+        await WriteVerboseScanFileSummary(outputWriter, tradeRootDirectory, scanResult.AffectedFiles, filteredGaps).ConfigureAwait(false);
 
         for (var i = 0; i < filteredGaps.Count; i++)
         {
@@ -114,13 +131,42 @@ internal class QuantaCandleRunner(ITradeGapScanner gapScanner, ITradeGapHealer g
                 ? "unknown"
                 : $"{gap.MissingTradeIds.Value.FirstTradeId}-{gap.MissingTradeIds.Value.LastTradeId}";
             var affectedFileInfo = FormatAffectedFileInfo(gapWithRange.Range);
+            var gapKind = DescribeGapKind(gapWithRange.Gap, gapWithRange.Range);
 
             await outputWriter
-                .WriteLineAsync($"Gap {i + 1}: exchange={gap.Exchange} instrument={gap.Symbol} missing={missingRange} files={affectedFileInfo}")
+                .WriteLineAsync($"Gap {i + 1}: kind={FormatGapKind(gapKind)} exchange={gap.Exchange} instrument={gap.Symbol} missing={missingRange} files={affectedFileInfo}")
                 .ConfigureAwait(false);
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Writes per-file scan details including file existence and boundary-check outcomes.
+    /// </summary>
+    private static async Task WriteVerboseScanFileSummary(
+        TextWriter outputWriter,
+        string tradeRootDirectory,
+        IReadOnlyList<TradeGapAffectedFile> affectedFiles,
+        IReadOnlyList<(TradeGap Gap, TradeGapAffectedRange? Range)> filteredGaps)
+    {
+        for (var i = 0; i < affectedFiles.Count; i++)
+        {
+            var affectedFile = affectedFiles[i];
+            var fullPath = Path.GetFullPath(Path.Combine(tradeRootDirectory, affectedFile.Path));
+            var fileExists = File.Exists(fullPath);
+            var startBoundaryGap = FindBoundaryGapForFile(affectedFile.Path, filteredGaps, ScanGapKind.StartBoundary);
+            var endBoundaryGap = FindBoundaryGapForFile(affectedFile.Path, filteredGaps, ScanGapKind.EndBoundary);
+            var interiorGapCount = CountInteriorGapsForFile(affectedFile.Path, filteredGaps);
+            var tradingDay = affectedFile.TradingDay?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) ?? "unknown";
+
+            await outputWriter
+                .WriteLineAsync($"File {i + 1}: path={affectedFile.Path} exists={fileExists.ToString().ToLowerInvariant()} tradingDay={tradingDay}")
+                .ConfigureAwait(false);
+            await outputWriter
+                .WriteLineAsync($"         boundary-start={FormatBoundaryStatus(startBoundaryGap)} boundary-end={FormatBoundaryStatus(endBoundaryGap)} interior-gaps={interiorGapCount}")
+                .ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -178,6 +224,33 @@ internal class QuantaCandleRunner(ITradeGapScanner gapScanner, ITradeGapHealer g
         return result;
     }
 
+    private static string FormatBoundaryStatus((TradeGap Gap, TradeGapAffectedRange? Range)? gapWithRange)
+    {
+        var result = "ok";
+
+        if (gapWithRange is not null)
+        {
+            var gap = gapWithRange.Value.Gap;
+            result = gap.MissingTradeIds is null
+                ? "gap unknown"
+                : $"gap {gap.MissingTradeIds.Value.FirstTradeId}-{gap.MissingTradeIds.Value.LastTradeId}";
+        }
+
+        return result;
+    }
+
+    private static string FormatGapKind(ScanGapKind gapKind)
+    {
+        var result = gapKind switch
+        {
+            ScanGapKind.StartBoundary => "start-boundary",
+            ScanGapKind.EndBoundary => "end-boundary",
+            ScanGapKind.Interior => "interior",
+            _ => "unknown",
+        };
+        return result;
+    }
+
     /// <summary>
     /// Gets the configured trade root directory exactly as supplied by the caller.
     /// </summary>
@@ -205,6 +278,98 @@ internal class QuantaCandleRunner(ITradeGapScanner gapScanner, ITradeGapHealer g
                 var range = i < scanResult.AffectedRanges.Count ? scanResult.AffectedRanges[i] : null;
                 result.Add((gap, range));
             }
+        }
+
+        return result;
+    }
+
+    private static int CountInteriorGapsForFile(
+        string relativePath,
+        IReadOnlyList<(TradeGap Gap, TradeGapAffectedRange? Range)> filteredGaps)
+    {
+        var result = 0;
+
+        for (var i = 0; i < filteredGaps.Count; i++)
+        {
+            var gapWithRange = filteredGaps[i];
+            if (DescribeGapKind(gapWithRange.Gap, gapWithRange.Range) != ScanGapKind.Interior)
+            {
+                continue;
+            }
+
+            if (GapTouchesFile(gapWithRange.Range, relativePath))
+            {
+                result++;
+            }
+        }
+
+        return result;
+    }
+
+    private static ScanGapKind DescribeGapKind(TradeGap gap, TradeGapAffectedRange? range)
+    {
+        var result = ScanGapKind.Unknown;
+
+        if (range is not null
+            && range.FromLocation is not null
+            && range.ToLocation is not null
+            && range.FromLocation.FilePath.Equals(range.ToLocation.FilePath, StringComparison.Ordinal)
+            && range.FromLocation.LineNumber == range.ToLocation.LineNumber
+            && gap.ToInclusive is not null)
+        {
+            if (gap.ToInclusive.Value.TradeId.Equals(range.ToInclusive.TradeId, StringComparison.Ordinal))
+            {
+                result = ScanGapKind.StartBoundary;
+            }
+            else if (gap.FromExclusive.TradeId.Equals(range.FromInclusive.TradeId, StringComparison.Ordinal))
+            {
+                result = ScanGapKind.EndBoundary;
+            }
+        }
+        else if (range is not null)
+        {
+            result = ScanGapKind.Interior;
+        }
+
+        return result;
+    }
+
+    private static (TradeGap Gap, TradeGapAffectedRange? Range)? FindBoundaryGapForFile(
+        string relativePath,
+        IReadOnlyList<(TradeGap Gap, TradeGapAffectedRange? Range)> filteredGaps,
+        ScanGapKind expectedKind)
+    {
+        (TradeGap Gap, TradeGapAffectedRange? Range)? result = null;
+
+        for (var i = 0; i < filteredGaps.Count; i++)
+        {
+            var gapWithRange = filteredGaps[i];
+            if (DescribeGapKind(gapWithRange.Gap, gapWithRange.Range) != expectedKind)
+            {
+                continue;
+            }
+
+            if (GapTouchesFile(gapWithRange.Range, relativePath))
+            {
+                result = gapWithRange;
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    private static bool GapTouchesFile(TradeGapAffectedRange? range, string relativePath)
+    {
+        var result = false;
+
+        if (range?.FromLocation is not null && range.FromLocation.FilePath.Equals(relativePath, StringComparison.Ordinal))
+        {
+            result = true;
+        }
+        else if (range?.ToLocation is not null && range.ToLocation.FilePath.Equals(relativePath, StringComparison.Ordinal))
+        {
+            result = true;
         }
 
         return result;

@@ -22,7 +22,7 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
     {
         ValidateRequestedRange(startId, endId);
 
-        var requestedSymbol = BinanceSymbol.ToStreamSymbol(instrument);
+        var requestedSymbol = BinanceSymbol.ToRestSymbol(instrument);
         var fetchedTrades = new List<TradeInfo>();
         var nextTradeId = startId;
 

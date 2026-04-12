@@ -3,6 +3,7 @@ using System.Globalization;
 using LogMachina;
 
 using QuantaCandle.Core.Trading;
+using QuantaCandle.Exchange.Binance.Internal;
 
 namespace QuantaCandle.Exchange.Binance;
 
@@ -13,7 +14,6 @@ public sealed class TradeDayBoundaryResolver(
     IBinanceRawTradeLookupClient rawTradeLookupClient,
     ILogMachina<TradeDayBoundaryResolver> log) : ITradeDayBoundaryResolver
 {
-    private static readonly ExchangeId BinanceExchange = new("Binance");
     private readonly ILogMachina<TradeDayBoundaryResolver> _log = log ?? throw new ArgumentNullException(nameof(log));
     private readonly IBinanceRawTradeLookupClient _rawTradeLookupClient = rawTradeLookupClient ?? throw new ArgumentNullException(nameof(rawTradeLookupClient));
 
@@ -33,10 +33,10 @@ public sealed class TradeDayBoundaryResolver(
         var nextUtcDayStart = utcDayStart.AddDays(1);
         _log.Trace($"Resolving Binance raw trade day boundary for {symbol} on {utcDate:yyyy-MM-dd}.");
 
-        var firstTrade = await _rawTradeLookupClient.FindFirstTradeAt(symbol, utcDayStart, cancellationToken).ConfigureAwait(false);
+        var firstTrade = await _rawTradeLookupClient.FindFirstTradeAt(utcDayStart, symbol, cancellationToken).ConfigureAwait(false);
         ValidateTradeWithinDay(firstTrade, utcDate, "first");
 
-        var nextDayFirstTrade = await _rawTradeLookupClient.FindFirstTradeAt(symbol, nextUtcDayStart, cancellationToken).ConfigureAwait(false);
+        var nextDayFirstTrade = await _rawTradeLookupClient.FindFirstTradeAt(nextUtcDayStart, symbol, cancellationToken).ConfigureAwait(false);
         var expectedFirstTradeId = ParseTradeId(firstTrade);
         var nextDayFirstTradeId = ParseTradeId(nextDayFirstTrade);
         var candidateExpectedLastTradeId = nextDayFirstTradeId - 1;
@@ -89,9 +89,9 @@ public sealed class TradeDayBoundaryResolver(
 
     private static void ValidateExchange(ExchangeId exchange)
     {
-        if (!exchange.Equals(BinanceExchange))
+        if (!exchange.Value.Equals(BinanceHelper.Signature.Value, StringComparison.OrdinalIgnoreCase))
         {
-            throw new NotSupportedException($"Trade day boundary resolution supports exchange '{BinanceExchange}' only. Actual '{exchange}'.");
+            throw new NotSupportedException($"Trade day boundary resolution supports exchange '{BinanceHelper.Signature}' only. Actual '{exchange}'.");
         }
     }
 

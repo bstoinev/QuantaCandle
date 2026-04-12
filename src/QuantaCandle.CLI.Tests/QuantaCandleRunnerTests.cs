@@ -19,7 +19,8 @@ public sealed class QuantaCandleRunnerTests
         var root = CreateTempRoot();
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
-        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
 
         try
@@ -61,6 +62,7 @@ public sealed class QuantaCandleRunnerTests
         var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
         TradeGapScanRequest? capturedRequest = null;
 
         scannerMoq
@@ -68,7 +70,7 @@ public sealed class QuantaCandleRunnerTests
             .Callback<TradeGapScanRequest, CancellationToken>((request, _) => capturedRequest = request)
             .Returns(new ValueTask<TradeGapScanResult>(new TradeGapScanResult(1, 0, 0, [], [], [])));
 
-        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object);
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
 
         try
@@ -118,13 +120,14 @@ public sealed class QuantaCandleRunnerTests
             ]);
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
 
         scannerMoq
             .Setup(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()))
             .Callback<TradeGapScanRequest, CancellationToken>((request, _) => capturedRequest = request)
             .Returns(new ValueTask<TradeGapScanResult>(scanResult));
 
-        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object);
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
         var workDirectory = CreateTempRoot();
 
@@ -141,6 +144,11 @@ public sealed class QuantaCandleRunnerTests
             Assert.Contains("Files scanned:", outputWriter.ToString(), StringComparison.Ordinal);
             Assert.Contains("Trades scanned:", outputWriter.ToString(), StringComparison.Ordinal);
             Assert.Contains("Gaps found:", outputWriter.ToString(), StringComparison.Ordinal);
+            Assert.Contains("File 1: path=", outputWriter.ToString(), StringComparison.Ordinal);
+            Assert.Contains("exists=false", outputWriter.ToString(), StringComparison.Ordinal);
+            Assert.Contains("boundary-start=ok", outputWriter.ToString(), StringComparison.Ordinal);
+            Assert.Contains("boundary-end=ok", outputWriter.ToString(), StringComparison.Ordinal);
+            Assert.Contains("kind=interior", outputWriter.ToString(), StringComparison.Ordinal);
             Assert.Contains("exchange=binance", outputWriter.ToString(), StringComparison.Ordinal);
             Assert.Contains("instrument=BTC-USDT", outputWriter.ToString(), StringComparison.Ordinal);
             Assert.Contains("missing=101-102", outputWriter.ToString(), StringComparison.Ordinal);
@@ -162,6 +170,7 @@ public sealed class QuantaCandleRunnerTests
         var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
         TradeGapHealRequest? capturedRequest = null;
         var gap = CreateBoundedGap("Binance", "BTC-USDT", 101, 102);
         var scanResult = new TradeGapScanResult(
@@ -199,7 +208,7 @@ public sealed class QuantaCandleRunnerTests
                         [new TradeGapAffectedFile(Path.Combine("BTC-USDT", "2026-03-12.jsonl"), new DateOnly(2026, 3, 12))],
                         [])));
 
-        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object);
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
 
         try
@@ -233,7 +242,8 @@ public sealed class QuantaCandleRunnerTests
         var workDirectory = CreateTempRoot();
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
-        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
 
         try
@@ -269,7 +279,8 @@ public sealed class QuantaCandleRunnerTests
         var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
-        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
 
         try
@@ -307,7 +318,8 @@ public sealed class QuantaCandleRunnerTests
         var workDirectory = CreateTempRoot();
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
-        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
 
         try
@@ -337,6 +349,7 @@ public sealed class QuantaCandleRunnerTests
         var workDirectory = CreateTempRoot();
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
         TradeGapScanRequest? capturedRequest = null;
 
         scannerMoq
@@ -344,7 +357,7 @@ public sealed class QuantaCandleRunnerTests
             .Callback<TradeGapScanRequest, CancellationToken>((request, _) => capturedRequest = request)
             .Returns(new ValueTask<TradeGapScanResult>(new TradeGapScanResult(0, 0, 0, [], [], [])));
 
-        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object);
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
 
         try
@@ -379,6 +392,15 @@ public sealed class QuantaCandleRunnerTests
                 new TradeWatermark("103", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
                 new MissingTradeIdRange(missingTradeIdStart, missingTradeIdEnd));
 
+        return result;
+    }
+
+    private static Mock<ITradeGapScanAugmenter> CreatePassThroughScanAugmenterMock()
+    {
+        var result = new Mock<ITradeGapScanAugmenter>(MockBehavior.Strict);
+        result
+            .Setup(mock => mock.Augment(It.IsAny<TradeGapScanRequest>(), It.IsAny<TradeGapScanResult>(), It.IsAny<CancellationToken>()))
+            .Returns<TradeGapScanRequest, TradeGapScanResult, CancellationToken>((_, scanResult, _) => ValueTask.FromResult(scanResult));
         return result;
     }
 

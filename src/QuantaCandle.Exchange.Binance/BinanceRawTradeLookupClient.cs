@@ -23,7 +23,7 @@ public sealed class BinanceRawTradeLookupClient(
     {
         ValidateTimestampUtc(timestampUtc);
 
-        var requestedSymbol = BinanceSymbol.ToStreamSymbol(instrument);
+        var requestedSymbol = BinanceSymbol.ToRestSymbol(instrument);
         var (seedTradeId, seedLastTradeId) = await GetAggregateSeedTradeRange(requestedSymbol, timestampUtc, cancellationToken).ConfigureAwait(false);
         _log.Trace($"Resolving first Binance raw trade at or after {timestampUtc:O} for {instrument} using aggregate seed {seedTradeId}-{seedLastTradeId}.");
 
@@ -75,7 +75,7 @@ public sealed class BinanceRawTradeLookupClient(
             throw new ArgumentOutOfRangeException(nameof(tradeId), tradeId, "Trade id must be positive.");
         }
 
-        var requestedSymbol = BinanceSymbol.ToStreamSymbol(instrument);
+        var requestedSymbol = BinanceSymbol.ToRestSymbol(instrument);
         var trades = await FetchRawTrades(requestedSymbol, instrument, tradeId, 1, cancellationToken).ConfigureAwait(false);
         var verified = trades.Count == 1 && BinanceHelper.GetTradeId(trades[0]) == tradeId;
 
@@ -159,7 +159,7 @@ public sealed class BinanceRawTradeLookupClient(
             var price = BinanceHelper.GetRequiredDecimal(item, "price", index, "trade");
             var quantity = BinanceHelper.GetRequiredDecimal(item, "qty", index, "trade");
             var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timestampUnixMilliseconds);
-            var tradeKey = new TradeKey(_binanceId, instrument, tradeId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var tradeKey = new TradeKey(BinanceHelper.Signature, instrument, tradeId.ToString(System.Globalization.CultureInfo.InvariantCulture));
             var trade = new TradeInfo(tradeKey, timestamp, price, quantity);
 
             result.Add(trade);

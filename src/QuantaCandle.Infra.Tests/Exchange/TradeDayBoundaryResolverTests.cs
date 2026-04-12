@@ -4,6 +4,7 @@ using Moq;
 
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Exchange.Binance;
+using QuantaCandle.Exchange.Binance.Internal;
 
 namespace QuantaCandle.Infra.Tests.Exchange;
 
@@ -22,14 +23,14 @@ public sealed class TradeDayBoundaryResolverTests
 
         lookupClientMoq
             .Setup(client => client.FindFirstTradeAt(
-                instrument,
                 new DateTimeOffset(2026, 4, 10, 0, 0, 0, TimeSpan.Zero),
+                instrument,
                 It.IsAny<CancellationToken>()))
             .Returns(new ValueTask<TradeInfo>(CreateTrade(101, "2026-04-10T00:00:00.001Z", instrument)));
         lookupClientMoq
             .Setup(client => client.FindFirstTradeAt(
-                instrument,
                 new DateTimeOffset(2026, 4, 11, 0, 0, 0, TimeSpan.Zero),
+                instrument,
                 It.IsAny<CancellationToken>()))
             .Returns(new ValueTask<TradeInfo>(CreateTrade(201, "2026-04-11T00:00:00.001Z", instrument)));
         lookupClientMoq
@@ -95,8 +96,8 @@ public sealed class TradeDayBoundaryResolverTests
         var capturedTimestamps = new List<DateTimeOffset>();
 
         lookupClientMoq
-            .Setup(client => client.FindFirstTradeAt(instrument, It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .Returns((Instrument _, DateTimeOffset timestampUtc, CancellationToken _) =>
+            .Setup(client => client.FindFirstTradeAt(It.IsAny<DateTimeOffset>(), instrument, It.IsAny<CancellationToken>()))
+            .Returns((DateTimeOffset timestampUtc, Instrument _, CancellationToken _) =>
             {
                 capturedTimestamps.Add(timestampUtc);
                 var trade = capturedTimestamps.Count == 1
@@ -108,7 +109,7 @@ public sealed class TradeDayBoundaryResolverTests
             .Setup(client => client.TryVerifyRawTradeId(instrument, 200, It.IsAny<CancellationToken>()))
             .Returns(new ValueTask<bool>(true));
 
-        _ = await resolver.Resolve(new ExchangeId("Binance"), instrument, utcDate, TradeDayBoundaryResolutionMode.Strict, CancellationToken.None);
+        _ = await resolver.Resolve(BinanceHelper.Signature, instrument, utcDate, TradeDayBoundaryResolutionMode.Strict, CancellationToken.None);
 
         Assert.Equal(
             [
@@ -137,6 +138,25 @@ public sealed class TradeDayBoundaryResolverTests
         lookupClientMoq.Verify(client => client.TryVerifyRawTradeId(instrument, 201, It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task ResolveAcceptsExchangeNameCaseInsensitively()
+    {
+        var instrument = Instrument.Parse("BTC-USDT");
+        var utcDate = new DateOnly(2026, 4, 10);
+        var lookupClientMoq = new Mock<IBinanceRawTradeLookupClient>(MockBehavior.Strict);
+        var resolver = CreateResolver(lookupClientMoq);
+
+        SetupCommonLookups(lookupClientMoq, instrument);
+        lookupClientMoq
+            .Setup(client => client.TryVerifyRawTradeId(instrument, 200, It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<bool>(true));
+
+        var result = await resolver.Resolve(new ExchangeId("binance"), instrument, utcDate, TradeDayBoundaryResolutionMode.Strict, CancellationToken.None);
+
+        Assert.Equal(101, result.ExpectedFirstTradeId);
+        Assert.Equal(200, result.ExpectedLastTradeId);
+    }
+
     private static TradeDayBoundaryResolver CreateResolver(Mock<IBinanceRawTradeLookupClient> lookupClientMoq)
     {
         var log = new Mock<ILogMachina<TradeDayBoundaryResolver>>().Object;
@@ -158,14 +178,12 @@ public sealed class TradeDayBoundaryResolverTests
     {
         lookupClientMoq
             .Setup(client => client.FindFirstTradeAt(
-                instrument,
-                new DateTimeOffset(2026, 4, 10, 0, 0, 0, TimeSpan.Zero),
+                new DateTimeOffset(2026, 4, 10, 0, 0, 0, TimeSpan.Zero), instrument,
                 It.IsAny<CancellationToken>()))
             .Returns(new ValueTask<TradeInfo>(CreateTrade(101, "2026-04-10T00:00:00.001Z", instrument)));
         lookupClientMoq
             .Setup(client => client.FindFirstTradeAt(
-                instrument,
-                new DateTimeOffset(2026, 4, 11, 0, 0, 0, TimeSpan.Zero),
+                new DateTimeOffset(2026, 4, 11, 0, 0, 0, TimeSpan.Zero), instrument,
                 It.IsAny<CancellationToken>()))
             .Returns(new ValueTask<TradeInfo>(CreateTrade(201, "2026-04-11T00:00:00.001Z", instrument)));
     }

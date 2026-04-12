@@ -35,8 +35,41 @@ public sealed class BinanceRawTradeLookupClientTests
         Assert.True(result);
         Assert.Single(requestUris);
         Assert.Equal("/api/v3/historicalTrades", requestUris[0].AbsolutePath);
+        Assert.Contains("symbol=BTCUSDT", requestUris[0].Query, StringComparison.Ordinal);
         Assert.Contains("fromId=200", requestUris[0].Query, StringComparison.Ordinal);
         Assert.DoesNotContain("aggTrades", requestUris[0].ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FindFirstTradeAtUsesAggregateTradesEndpointWithRestSymbol()
+    {
+        var requestUris = new List<Uri>();
+        using var httpClient = CreateHttpClient(
+            requestUris,
+            request => request.RequestUri!.AbsolutePath.Contains("/api/v3/aggTrades", StringComparison.Ordinal)
+                ? """
+                [
+                  { "f": 200, "l": 200 }
+                ]
+                """
+                : """
+                [
+                  { "id": 200, "price": "100.10", "qty": "0.50", "time": 1775779200001 }
+                ]
+                """);
+        var client = new BinanceRawTradeLookupClient(httpClient, CreateLog());
+
+        var result = await client.FindFirstTradeAt(
+            new DateTimeOffset(2026, 4, 9, 0, 0, 0, TimeSpan.Zero),
+            "BTC-USDT",
+            CancellationToken.None);
+
+        Assert.Equal("200", result.Key.TradeId);
+        Assert.Equal(2, requestUris.Count);
+        Assert.Equal("/api/v3/aggTrades", requestUris[0].AbsolutePath);
+        Assert.Contains("symbol=BTCUSDT", requestUris[0].Query, StringComparison.Ordinal);
+        Assert.Equal("/api/v3/historicalTrades", requestUris[1].AbsolutePath);
+        Assert.Contains("symbol=BTCUSDT", requestUris[1].Query, StringComparison.Ordinal);
     }
 
     private static HttpClient CreateHttpClient(ICollection<Uri> requestUris, Func<HttpRequestMessage, string> payloadFactory)

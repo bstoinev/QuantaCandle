@@ -22,7 +22,10 @@ internal class Program
         container.AddLogMachina(c => c.WithNLog(Lifestyle.Singleton));
         container.RegisterSingleton(() => new HttpClient());
         container.RegisterSingleton<ITradeGapFetchClient, BinanceTradeGapFetchClient>();
+        container.RegisterSingleton<IBinanceRawTradeLookupClient, BinanceRawTradeLookupClient>();
+        container.RegisterSingleton<ITradeDayBoundaryResolver, TradeDayBoundaryResolver>();
         container.RegisterSingleton<ITradeGapScanner, LocalFileTradeGapScanner>();
+        container.RegisterSingleton<ITradeGapScanAugmenter, StrictTradeDayBoundaryScanAugmenter>();
         container.RegisterSingleton<ITradeGapHealer, LocalFileTradeGapHealer>();
 
         container.RegisterSingleton<IQuantaCandleRunner, QuantaCandleRunner>();

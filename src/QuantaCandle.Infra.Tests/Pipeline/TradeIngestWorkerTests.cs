@@ -261,7 +261,7 @@ public sealed class TradeIngestWorkerTests
 
         var run = worker.Run(channel.Reader, options, stoppingCts.Token);
 
-        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
+        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)), TestContext.Current.CancellationToken);
         checkpointSignal.Signal();
 
         await run;
@@ -285,7 +285,7 @@ public sealed class TradeIngestWorkerTests
 
         var run = worker.Run(channel.Reader, options, stoppingCts.Token);
 
-        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)));
+        await channel.Writer.WriteAsync(CreateTrade("0", options.Instruments[0], new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero)), TestContext.Current.CancellationToken);
         checkpointSignal.Signal(CheckpointRequestKind.Snapshot);
 
         await run;
