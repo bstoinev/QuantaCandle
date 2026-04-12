@@ -237,7 +237,7 @@ public sealed class QuantaCandleRunnerTests
     }
 
     [Fact]
-    public async Task HealDispatchesBoundaryAndInteriorGapsAsSingleEnvelopePass()
+    public async Task HealDispatchesExactRangesAsSinglePerFileTask()
     {
         var workDirectory = CreateTempRoot();
         var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
@@ -324,7 +324,77 @@ public sealed class QuantaCandleRunnerTests
             Assert.Equal([101L, 103L, 106L], request.RequestedMissingTradeRanges.Select(static range => range.LastTradeId).ToArray());
             var candidateFile = Assert.Single(request.CandidateFiles);
             Assert.Equal(relativePath, candidateFile.Path);
-            Assert.Contains("Pass 1/1:", outputWriter.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Task 1/1:", outputWriter.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(workDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task HealDispatchesMultipleFilesAsIndependentTasks()
+    {
+        var workDirectory = CreateTempRoot();
+        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var healRequests = new List<TradeGapHealRequest>();
+        var firstRelativePath = Path.Combine("Binance", "BTC-USDT", "2026-03-12.jsonl");
+        var secondRelativePath = Path.Combine("Binance", "BTC-USDT", "2026-03-13.jsonl");
+        var firstGap = CreateGapWithRange("Binance", "BTC-USDT", 101, 102, firstRelativePath, 2, 3, "100", "103");
+        var secondGap = CreateGapWithRange("Binance", "BTC-USDT", 201, 201, secondRelativePath, 5, 6, "200", "202");
+        var scanResult = new TradeGapScanResult(
+            2,
+            8,
+            0,
+            [firstGap.Gap, secondGap.Gap],
+            [
+                new TradeGapAffectedFile(firstRelativePath, new DateOnly(2026, 3, 12)),
+                new TradeGapAffectedFile(secondRelativePath, new DateOnly(2026, 3, 13)),
+            ],
+            [firstGap.Range!, secondGap.Range!]);
+
+        scannerMoq
+            .Setup(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<TradeGapScanResult>(scanResult));
+        healerMoq
+            .Setup(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TradeGapHealRequest, CancellationToken>((request, _) => healRequests.Add(request))
+            .Returns<TradeGapHealRequest, CancellationToken>((request, _) => new ValueTask<TradeGapHealResult>(CreateHealResult(request, TradeGapHealStatus.Full)));
+
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            Directory.CreateDirectory(instrumentDirectory);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-03-12.jsonl"), "{}", CancellationToken.None);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-03-13.jsonl"), "{}", CancellationToken.None);
+
+            var exitCode = await sut.Heal(
+                new CliOptions(
+                    CliMode.Heal,
+                    workDirectory,
+                    "Binance",
+                    "BTC-USDT",
+                    string.Empty,
+                    [new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 13)]),
+                outputWriter,
+                CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(2, healRequests.Count);
+            Assert.Equal(firstRelativePath, Assert.Single(healRequests[0].CandidateFiles).Path);
+            Assert.Equal(secondRelativePath, Assert.Single(healRequests[1].CandidateFiles).Path);
+            Assert.Equal([101L], healRequests[0].RequestedMissingTradeRanges.Select(static range => range.FirstTradeId).ToArray());
+            Assert.Equal([102L], healRequests[0].RequestedMissingTradeRanges.Select(static range => range.LastTradeId).ToArray());
+            Assert.Equal([201L], healRequests[1].RequestedMissingTradeRanges.Select(static range => range.FirstTradeId).ToArray());
+            Assert.Equal([201L], healRequests[1].RequestedMissingTradeRanges.Select(static range => range.LastTradeId).ToArray());
+            Assert.Contains("Executing 2 healing task(s).", outputWriter.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Task 1/2:", outputWriter.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Task 2/2:", outputWriter.ToString(), StringComparison.Ordinal);
         }
         finally
         {

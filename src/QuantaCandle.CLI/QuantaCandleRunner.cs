@@ -20,11 +20,24 @@ internal class QuantaCandleRunner(
     private readonly ITradeGapHealer _gapHealer = gapHealer ?? throw new ArgumentNullException(nameof(gapHealer));
     private readonly ITradeGapScanAugmenter _tradeGapScanAugmenter = tradeGapScanAugmenter ?? throw new ArgumentNullException(nameof(tradeGapScanAugmenter));
 
-    private sealed record HealPass(
-        long MissingTradeIdStart,
-        long MissingTradeIdEnd,
+    /// <summary>
+    /// Represents one per-file healing task with exact missing trade ranges for that file.
+    /// </summary>
+    private sealed record HealFileTask(
+        TradeGapAffectedFile CandidateFile,
         IReadOnlyList<MissingTradeIdRange> MissingTradeRanges,
-        IReadOnlyList<TradeGapAffectedFile> CandidateFiles);
+        TradeGapAffectedRange? AffectedRange)
+    {
+        /// <summary>
+        /// Gets the inclusive fetch envelope start for the exact ranges assigned to the file.
+        /// </summary>
+        public long MissingTradeIdStart { get; } = MissingTradeRanges[0].FirstTradeId;
+
+        /// <summary>
+        /// Gets the inclusive fetch envelope end for the exact ranges assigned to the file.
+        /// </summary>
+        public long MissingTradeIdEnd { get; } = MissingTradeRanges[^1].LastTradeId;
+    }
 
     public async Task<int> Candlize(CliOptions runOptions, TextWriter outputWriter, CancellationToken cancellationToken)
     {
@@ -65,21 +78,22 @@ internal class QuantaCandleRunner(
         var requestedExchange = new ExchangeId(runOptions.Exchange);
         var requestedInstrument = Instrument.Parse(runOptions.Instrument);
         var filteredGaps = FilterGaps(scanResult, requestedExchange, requestedInstrument);
-        var healPasses = BuildHealPasses(filteredGaps, candidateFileResolution.ResolvedFiles);
+        var healFileTasks = BuildHealFileTasks(filteredGaps, candidateFileResolution.ResolvedFiles);
         var fullHealCount = 0;
         var partialHealCount = 0;
         var noChangeCount = 0;
 
         await outputWriter
-            .WriteLineAsync($"Found {filteredGaps.Count} bounded gap(s). Executing {healPasses.Count} healing pass(es).")
+            .WriteLineAsync($"Found {filteredGaps.Count} bounded gap(s). Executing {healFileTasks.Count} healing task(s).")
             .ConfigureAwait(false);
 
-        for (var index = 0; index < healPasses.Count; index++)
+        for (var index = 0; index < healFileTasks.Count; index++)
         {
-            var healPass = healPasses[index];
-            var requestedRangeSummary = string.Join(", ", healPass.MissingTradeRanges.Select(FormatMissingTradeRange));
+            var healFileTask = healFileTasks[index];
+            var requestedRangeSummary = string.Join(", ", healFileTask.MissingTradeRanges.Select(FormatMissingTradeRange));
             await outputWriter
-                .WriteLineAsync($"Pass {index + 1}/{healPasses.Count}: healing missing range(s) [{requestedRangeSummary}] via fetch envelope {healPass.MissingTradeIdStart}-{healPass.MissingTradeIdEnd}.")
+                .WriteLineAsync(
+                    $"Task {index + 1}/{healFileTasks.Count}: healing file '{healFileTask.CandidateFile.Path}' with exact missing range(s) [{requestedRangeSummary}] via fetch envelope {healFileTask.MissingTradeIdStart}-{healFileTask.MissingTradeIdEnd}.")
                 .ConfigureAwait(false);
 
             var healResult = await _gapHealer
@@ -88,18 +102,18 @@ internal class QuantaCandleRunner(
                         tradeRootDirectory,
                         requestedExchange,
                         requestedInstrument,
-                        healPass.MissingTradeIdStart,
-                        healPass.MissingTradeIdEnd,
-                        healPass.CandidateFiles,
-                        null,
-                        healPass.MissingTradeRanges,
-                        new TextWriterTradeGapProgressReporter(outputWriter, $"Pass {index + 1}/{healPasses.Count}: ")),
+                        healFileTask.MissingTradeIdStart,
+                        healFileTask.MissingTradeIdEnd,
+                        [healFileTask.CandidateFile],
+                        healFileTask.AffectedRange,
+                        healFileTask.MissingTradeRanges,
+                        new TextWriterTradeGapProgressReporter(outputWriter, $"Task {index + 1}/{healFileTasks.Count}: ")),
                     cancellationToken)
                 .ConfigureAwait(false);
 
             await outputWriter
                 .WriteLineAsync(
-                    $"Pass {index + 1}/{healPasses.Count} result: outcome={healResult.Outcome} fetched={healResult.FetchedTradeCount} inserted={healResult.InsertedTradeCount} unresolved={healResult.UnresolvedTradeRanges.Count}.")
+                    $"Task {index + 1}/{healFileTasks.Count} result: outcome={healResult.Outcome} fetched={healResult.FetchedTradeCount} inserted={healResult.InsertedTradeCount} unresolved={healResult.UnresolvedTradeRanges.Count}.")
                 .ConfigureAwait(false);
 
             if (healResult.Outcome == TradeGapHealStatus.Full)
@@ -307,12 +321,13 @@ internal class QuantaCandleRunner(
         return result;
     }
 
-    private static List<HealPass> BuildHealPasses(
+    private static List<HealFileTask> BuildHealFileTasks(
         IReadOnlyList<(TradeGap Gap, TradeGapAffectedRange? Range)> filteredGaps,
         IReadOnlyList<TradeGapAffectedFile> candidateFiles)
     {
         var candidateFilesByPath = candidateFiles.ToDictionary(static file => file.Path, StringComparer.Ordinal);
-        var result = new List<HealPass>();
+        var exactRangesByPath = new Dictionary<string, List<MissingTradeIdRange>>(StringComparer.Ordinal);
+        var firstAffectedRangeByPath = new Dictionary<string, TradeGapAffectedRange?>(StringComparer.Ordinal);
 
         foreach (var gapWithRange in filteredGaps)
         {
@@ -321,35 +336,24 @@ internal class QuantaCandleRunner(
                 continue;
             }
 
-            var passFiles = ResolveHealPassFiles(gapWithRange.Range, candidateFilesByPath);
-            result.Add(new HealPass(
-                gapWithRange.Gap.MissingTradeIds.Value.FirstTradeId,
-                gapWithRange.Gap.MissingTradeIds.Value.LastTradeId,
-                [gapWithRange.Gap.MissingTradeIds.Value],
-                passFiles));
+            var affectedFile = ResolveHealTaskFile(gapWithRange.Range, candidateFilesByPath);
+            if (!exactRangesByPath.TryGetValue(affectedFile.Path, out var ranges))
+            {
+                ranges = [];
+                exactRangesByPath.Add(affectedFile.Path, ranges);
+                firstAffectedRangeByPath.Add(affectedFile.Path, gapWithRange.Range);
+            }
+
+            ranges.Add(gapWithRange.Gap.MissingTradeIds.Value);
         }
 
-        return result
-            .GroupBy(
-                static pass => string.Join("|", pass.CandidateFiles.Select(static file => file.Path)),
-                StringComparer.Ordinal)
-            .Select(static group =>
-            {
-                var firstPass = group
-                    .OrderBy(static pass => pass.MissingTradeIdStart)
-                    .First();
-                var mergedRanges = group
-                    .SelectMany(static pass => pass.MissingTradeRanges)
-                    .ToList()
-                    .MergeContiguous();
-                return new HealPass(
-                    mergedRanges[0].FirstTradeId,
-                    mergedRanges[^1].LastTradeId,
-                    mergedRanges,
-                    firstPass.CandidateFiles);
-            })
-            .OrderBy(static pass => pass.CandidateFiles[0].Path, StringComparer.Ordinal)
-            .ThenBy(static pass => pass.MissingTradeIdStart)
+        return exactRangesByPath
+            .Select(kvp => new HealFileTask(
+                candidateFilesByPath[kvp.Key],
+                kvp.Value.MergeContiguous(),
+                firstAffectedRangeByPath[kvp.Key]))
+            .OrderBy(static task => task.CandidateFile.Path, StringComparer.Ordinal)
+            .ThenBy(static task => task.MissingTradeIdStart)
             .ToList();
     }
 
@@ -361,7 +365,7 @@ internal class QuantaCandleRunner(
         return result;
     }
 
-    private static List<TradeGapAffectedFile> ResolveHealPassFiles(
+    private static TradeGapAffectedFile ResolveHealTaskFile(
         TradeGapAffectedRange? range,
         IReadOnlyDictionary<string, TradeGapAffectedFile> candidateFilesByPath)
     {
@@ -372,13 +376,15 @@ internal class QuantaCandleRunner(
 
         if (resolvedFiles.Count == 0)
         {
-            throw new InvalidOperationException("Unable to resolve affected candidate file(s) for bounded gap healing.");
+            throw new InvalidOperationException("Unable to resolve the affected candidate file for bounded gap healing.");
         }
 
-        var result = resolvedFiles
-            .OrderBy(static file => file.Path, StringComparer.Ordinal)
-            .ToList();
-        return result;
+        if (resolvedFiles.Count > 1)
+        {
+            throw new InvalidOperationException("Bounded gap healing requires an exact single affected candidate file per healing task.");
+        }
+
+        return resolvedFiles[0];
     }
 
     private static void AddCandidateFile(
