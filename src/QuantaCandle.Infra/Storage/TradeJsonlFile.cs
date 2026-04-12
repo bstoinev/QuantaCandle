@@ -288,7 +288,7 @@ public static class TradeJsonlFile
         return result;
     }
 
-    private static string SerializeTrade(TradeInfo trade)
+    internal static string SerializeTrade(TradeInfo trade)
     {
         var record = new
         {

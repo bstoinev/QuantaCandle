@@ -1,31 +1,31 @@
 using LogMachina;
 
+using Moq;
+
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Infra;
 using QuantaCandle.Infra.Storage;
 
-using Moq;
-
 namespace QuantaCandle.Infra.Tests.Storage;
 
 /// <summary>
-/// Verifies local JSONL trade gap healing behavior for bounded single-gap repair scenarios.
+/// Verifies streamed local JSONL trade gap healing behavior.
 /// </summary>
 public sealed class LocalFileTradeGapHealerTests
 {
     private static readonly ExchangeId BinanceExchange = new("Binance");
 
     [Fact]
-    public async Task Heals_one_bounded_gap_fully()
+    public async Task InsertsMissingStartBoundaryViaStreamingSplice()
     {
         var rootDirectory = CreateRootDirectory();
         try
         {
             var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
-            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(103)]);
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(102), CreateTrade(103)]);
 
-            var healer = new LocalFileTradeGapHealer(new StubTradeGapFetchClient([CreateTrade(101), CreateTrade(102)]), CreateLog());
-            var result = await healer.Heal(CreateRequest(rootDirectory, 101, 102, relativePath), CancellationToken.None);
+            var healer = new LocalFileTradeGapHealer(new StubTradeGapFetchClient([CreateTrade(100), CreateTrade(101)]), CreateLog());
+            var result = await healer.Heal(CreateRequest(rootDirectory, 100, 101, relativePath), CancellationToken.None);
 
             Assert.Equal(TradeGapHealStatus.Full, result.Outcome);
             Assert.Equal(2, result.FetchedTradeCount);
@@ -43,7 +43,87 @@ public sealed class LocalFileTradeGapHealerTests
     }
 
     [Fact]
-    public async Task Partial_heal_persists_returned_trades_and_reports_partial()
+    public async Task InsertsMissingEndBoundaryViaStreamingSplice()
+    {
+        var rootDirectory = CreateRootDirectory();
+        try
+        {
+            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(101)]);
+
+            var healer = new LocalFileTradeGapHealer(new StubTradeGapFetchClient([CreateTrade(102), CreateTrade(103)]), CreateLog());
+            var result = await healer.Heal(CreateRequest(rootDirectory, 102, 103, relativePath), CancellationToken.None);
+
+            Assert.Equal(TradeGapHealStatus.Full, result.Outcome);
+            Assert.Equal(2, result.InsertedTradeCount);
+
+            var trades = await ReadTradesAsync(rootDirectory, relativePath);
+            Assert.Equal(["100", "101", "102", "103"], trades.Select(static trade => trade.Key.TradeId).ToArray());
+        }
+        finally
+        {
+            DeleteRootDirectory(rootDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task InsertsInteriorGapViaStreamingSplice()
+    {
+        var rootDirectory = CreateRootDirectory();
+        try
+        {
+            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(104)]);
+
+            var healer = new LocalFileTradeGapHealer(
+                new StubTradeGapFetchClient([CreateTrade(103), CreateTrade(101), CreateTrade(102)]),
+                CreateLog());
+            var result = await healer.Heal(CreateRequest(rootDirectory, 101, 103, relativePath), CancellationToken.None);
+
+            Assert.Equal(TradeGapHealStatus.Full, result.Outcome);
+
+            var trades = await ReadTradesAsync(rootDirectory, relativePath);
+            Assert.Equal(["100", "101", "102", "103", "104"], trades.Select(static trade => trade.Key.TradeId).ToArray());
+        }
+        finally
+        {
+            DeleteRootDirectory(rootDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RoutesTradesToCorrectUtcDailyFiles()
+    {
+        var rootDirectory = CreateRootDirectory();
+        try
+        {
+            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
+            var midnightTrade = new TradeInfo(
+                new TradeKey(BinanceExchange, Instrument.Parse("BTC-USDT"), "101"),
+                new DateTimeOffset(2026, 3, 29, 0, 0, 1, TimeSpan.Zero),
+                201m,
+                1m);
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(102)]);
+
+            var healer = new LocalFileTradeGapHealer(new StubTradeGapFetchClient([midnightTrade]), CreateLog());
+            var result = await healer.Heal(CreateRequest(rootDirectory, 101, 101, relativePath), CancellationToken.None);
+
+            Assert.Equal(TradeGapHealStatus.Full, result.Outcome);
+            Assert.Contains(result.AffectedFiles, static file => file.Path.Equals(Path.Combine("BTC-USDT", "2026-03-29.jsonl"), StringComparison.Ordinal));
+
+            var originalDayTrades = await ReadTradesAsync(rootDirectory, relativePath);
+            var nextDayTrades = await ReadTradesAsync(rootDirectory, Path.Combine("BTC-USDT", "2026-03-29.jsonl"));
+            Assert.Equal(["100", "102"], originalDayTrades.Select(static trade => trade.Key.TradeId).ToArray());
+            Assert.Equal(["101"], nextDayTrades.Select(static trade => trade.Key.TradeId).ToArray());
+        }
+        finally
+        {
+            DeleteRootDirectory(rootDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task PartialCoverageStillReportsUnresolvedRangesCorrectly()
     {
         var rootDirectory = CreateRootDirectory();
         try
@@ -69,21 +149,24 @@ public sealed class LocalFileTradeGapHealerTests
     }
 
     [Fact]
-    public async Task Merges_fetched_trades_in_deterministic_trade_id_order()
+    public async Task EqualFetchedAndLocalTradeIdFailsLoudly()
     {
         var rootDirectory = CreateRootDirectory();
         try
         {
             var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
-            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(104)]);
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(103)]);
+            var originalContents = await File.ReadAllTextAsync(Path.Combine(rootDirectory, relativePath), CancellationToken.None);
 
             var healer = new LocalFileTradeGapHealer(
-                new StubTradeGapFetchClient([CreateTrade(103), CreateTrade(101), CreateTrade(102)]),
+                new StubTradeGapFetchClient([CreateTrade(101), CreateTrade(103)]),
                 CreateLog());
-            await healer.Heal(CreateRequest(rootDirectory, 101, 103, relativePath), CancellationToken.None);
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => await healer.Heal(CreateRequest(rootDirectory, 101, 103, relativePath), CancellationToken.None));
 
-            var trades = await ReadTradesAsync(rootDirectory, relativePath);
-            Assert.Equal(["100", "101", "102", "103", "104"], trades.Select(static trade => trade.Key.TradeId).ToArray());
+            Assert.Contains("overlaps existing local trade id", exception.Message, StringComparison.Ordinal);
+            var currentContents = await File.ReadAllTextAsync(Path.Combine(rootDirectory, relativePath), CancellationToken.None);
+            Assert.Equal(originalContents, currentContents);
         }
         finally
         {
@@ -92,7 +175,55 @@ public sealed class LocalFileTradeGapHealerTests
     }
 
     [Fact]
-    public async Task Duplicate_fetched_trades_do_not_create_duplicates_in_output()
+    public async Task BoundaryAndInteriorGapsStillWorkAcrossExactStreamingPasses()
+    {
+        var rootDirectory = CreateRootDirectory();
+        try
+        {
+            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(102), CreateTrade(104), CreateTrade(107)]);
+
+            var healer = new LocalFileTradeGapHealer(new StubTradeGapFetchClient([CreateTrade(100), CreateTrade(101)]), CreateLog());
+            _ = await healer.Heal(CreateRequest(rootDirectory, 100, 101, relativePath), CancellationToken.None);
+            healer = new LocalFileTradeGapHealer(new StubTradeGapFetchClient([CreateTrade(103)]), CreateLog());
+            _ = await healer.Heal(CreateRequest(rootDirectory, 103, 103, relativePath), CancellationToken.None);
+            healer = new LocalFileTradeGapHealer(new StubTradeGapFetchClient([CreateTrade(105), CreateTrade(106)]), CreateLog());
+            _ = await healer.Heal(CreateRequest(rootDirectory, 105, 106, relativePath), CancellationToken.None);
+
+            var trades = await ReadTradesAsync(rootDirectory, relativePath);
+            Assert.Equal(["100", "101", "102", "103", "104", "105", "106", "107"], trades.Select(static trade => trade.Key.TradeId).ToArray());
+        }
+        finally
+        {
+            DeleteRootDirectory(rootDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task FetchedBatchInternalGapProducesWarningWithoutFailingHeal()
+    {
+        var rootDirectory = CreateRootDirectory();
+        try
+        {
+            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(106)]);
+
+            var healer = new LocalFileTradeGapHealer(
+                new StubTradeGapFetchClient([CreateTrade(101), CreateTrade(103), CreateTrade(104)]),
+                CreateLog());
+            var result = await healer.Heal(CreateRequest(rootDirectory, 101, 105, relativePath), CancellationToken.None);
+
+            Assert.Equal(TradeGapHealStatus.Partial, result.Outcome);
+            Assert.Contains(result.Warnings, static warning => warning.Contains("internal gap", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            DeleteRootDirectory(rootDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task DuplicateFetchedTradeIdFailsLoudly()
     {
         var rootDirectory = CreateRootDirectory();
         try
@@ -103,13 +234,10 @@ public sealed class LocalFileTradeGapHealerTests
             var healer = new LocalFileTradeGapHealer(
                 new StubTradeGapFetchClient([CreateTrade(101), CreateTrade(101), CreateTrade(102)]),
                 CreateLog());
-            var result = await healer.Heal(CreateRequest(rootDirectory, 101, 102, relativePath), CancellationToken.None);
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => await healer.Heal(CreateRequest(rootDirectory, 101, 102, relativePath), CancellationToken.None));
 
-            Assert.Equal(3, result.FetchedTradeCount);
-            Assert.Equal(2, result.InsertedTradeCount);
-
-            var trades = await ReadTradesAsync(rootDirectory, relativePath);
-            Assert.Equal(["100", "101", "102", "103"], trades.Select(static trade => trade.Key.TradeId).ToArray());
+            Assert.Contains("duplicate trade id", exception.Message, StringComparison.Ordinal);
         }
         finally
         {
@@ -118,7 +246,7 @@ public sealed class LocalFileTradeGapHealerTests
     }
 
     [Fact]
-    public async Task Original_file_remains_intact_on_hard_failure()
+    public async Task OriginalFileRemainsIntactOnHardFailure()
     {
         var rootDirectory = CreateRootDirectory();
         try
@@ -147,29 +275,13 @@ public sealed class LocalFileTradeGapHealerTests
     }
 
     [Fact]
-    public async Task Internal_gaps_in_fetched_batch_produce_warning_without_failing_heal()
+    public async Task ImplementationNoLongerContainsFullLocalLoadHelpers()
     {
-        var rootDirectory = CreateRootDirectory();
-        try
-        {
-            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
-            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(106)]);
+        var sourcePath = FindProjectFile("QuantaCandle.Infra", Path.Combine("Storage", "LocalFileTradeGapHealer.cs"));
+        var source = await File.ReadAllTextAsync(sourcePath, CancellationToken.None);
 
-            var healer = new LocalFileTradeGapHealer(
-                new StubTradeGapFetchClient([CreateTrade(101), CreateTrade(103), CreateTrade(104)]),
-                CreateLog());
-            var result = await healer.Heal(CreateRequest(rootDirectory, 101, 105, relativePath), CancellationToken.None);
-
-            Assert.Equal(TradeGapHealStatus.Partial, result.Outcome);
-            Assert.Contains(result.Warnings, static warning => warning.Contains("internal gap", StringComparison.OrdinalIgnoreCase));
-
-            var trades = await ReadTradesAsync(rootDirectory, relativePath);
-            Assert.Equal(["100", "101", "103", "104", "106"], trades.Select(static trade => trade.Key.TradeId).ToArray());
-        }
-        finally
-        {
-            DeleteRootDirectory(rootDirectory);
-        }
+        Assert.DoesNotContain("ReadExistingTradesAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("MergeTrades(", source, StringComparison.Ordinal);
     }
 
     private static TradeGapHealRequest CreateRequest(string rootDirectory, long missingTradeIdStart, long missingTradeIdEnd, string relativePath)
@@ -180,30 +292,26 @@ public sealed class LocalFileTradeGapHealerTests
             new TradeWatermark((missingTradeIdEnd + 1).ToString(), CreateTimestamp(missingTradeIdEnd + 1)),
             new TradeGapBoundaryLocation(relativePath, 1),
             new TradeGapBoundaryLocation(relativePath, 2));
-        var result = new TradeGapHealRequest(rootDirectory, BinanceExchange, Instrument.Parse("BTC-USDT"), missingTradeIdStart, missingTradeIdEnd, [affectedFile], affectedRange);
-        return result;
+        return new TradeGapHealRequest(rootDirectory, BinanceExchange, Instrument.Parse("BTC-USDT"), missingTradeIdStart, missingTradeIdEnd, [affectedFile], affectedRange);
     }
 
     private static TradeInfo CreateTrade(long tradeId)
     {
-        var result = new TradeInfo(
+        return new TradeInfo(
             new TradeKey(BinanceExchange, Instrument.Parse("BTC-USDT"), tradeId.ToString()),
             CreateTimestamp(tradeId),
             100m + tradeId,
             1m);
-        return result;
     }
 
     private static DateTimeOffset CreateTimestamp(long tradeId)
     {
-        var result = new DateTimeOffset(2026, 3, 28, 0, 0, 0, TimeSpan.Zero).AddSeconds(tradeId);
-        return result;
+        return new DateTimeOffset(2026, 3, 28, 0, 0, 0, TimeSpan.Zero).AddSeconds(tradeId);
     }
 
     private static async Task<IReadOnlyList<TradeInfo>> ReadTradesAsync(string rootDirectory, string relativePath)
     {
-        var result = await TradeJsonlFile.ReadTrades(Path.Combine(rootDirectory, relativePath), CancellationToken.None);
-        return result;
+        return await TradeJsonlFile.ReadTrades(Path.Combine(rootDirectory, relativePath), CancellationToken.None);
     }
 
     private static async Task WriteTradesAsync(string rootDirectory, string relativePath, IReadOnlyList<TradeInfo> trades)
@@ -228,8 +336,30 @@ public sealed class LocalFileTradeGapHealerTests
 
     private static ILogMachina<LocalFileTradeGapHealer> CreateLog()
     {
-        var result = new Mock<ILogMachina<LocalFileTradeGapHealer>>().Object;
-        return result;
+        return new Mock<ILogMachina<LocalFileTradeGapHealer>>().Object;
+    }
+
+    private static string FindProjectFile(string projectDirectoryName, string relativePath)
+    {
+        var currentDirectory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (currentDirectory is not null)
+        {
+            var candidate = Path.Combine(currentDirectory.FullName, projectDirectoryName, relativePath);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            var srcCandidate = Path.Combine(currentDirectory.FullName, "src", projectDirectoryName, relativePath);
+            if (File.Exists(srcCandidate))
+            {
+                return srcCandidate;
+            }
+
+            currentDirectory = currentDirectory.Parent;
+        }
+
+        throw new InvalidOperationException($"Unable to locate source file '{projectDirectoryName}{Path.DirectorySeparatorChar}{relativePath}'.");
     }
 
     /// <summary>

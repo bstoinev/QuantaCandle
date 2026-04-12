@@ -8,7 +8,7 @@ using QuantaCandle.Core.Trading;
 namespace QuantaCandle.Infra.Storage;
 
 /// <summary>
-/// Heals one bounded numeric trade gap inside a local JSONL dataset by merging fetched trades into local daily files.
+/// Heals one bounded numeric trade gap inside a local JSONL dataset by splicing fetched trades into the local stream.
 /// </summary>
 public sealed class LocalFileTradeGapHealer(
     ITradeGapFetchClient tradeGapFetchClient,
@@ -32,34 +32,35 @@ public sealed class LocalFileTradeGapHealer(
             var existingFiles = ResolveCandidateFiles(request);
             _log.Info($"Resolved {existingFiles.Count} candidate local trade file(s) for {request.Exchange}:{request.Symbol}.");
 
-            var existingTrades = await ReadExistingTradesAsync(request, existingFiles, cancellationToken).ConfigureAwait(false);
-            _log.Info($"Loaded {existingTrades.Count} existing trade(s) before healing {request.Exchange}:{request.Symbol} in range {request.MissingTradeIdStart}-{request.MissingTradeIdEnd}.");
-
             var fetchedTrades = await _tradeGapFetchClient
                 .Fetch(request.Symbol, request.MissingTradeIdStart, request.MissingTradeIdEnd, cancellationToken)
                 .ConfigureAwait(false);
             _log.Info($"Fetched {fetchedTrades.Count} trade(s) for requested gap {request.MissingTradeIdStart}-{request.MissingTradeIdEnd} on {request.Exchange}:{request.Symbol}.");
 
             var validatedFetchedTrades = ValidateFetchedTrades(fetchedTrades, request);
-            var unresolvedTradeRanges = DetermineUnresolvedTradeRanges(validatedFetchedTrades, requestedRange);
             var warnings = BuildWarnings(validatedFetchedTrades, requestedRange);
+            var fetchedTradeBatch = PrepareFetchedTradesForSplice(validatedFetchedTrades);
+            var unresolvedTradeRanges = DetermineUnresolvedTradeRanges(fetchedTradeBatch, requestedRange);
 
             foreach (var warning in warnings)
             {
                 _log.Warn(warning);
             }
 
-            var mergedTrades = MergeTrades(existingTrades, validatedFetchedTrades, out var insertedTradeCount);
-
-            var affectedFiles = new List<TradeGapAffectedFile>();
-            if (insertedTradeCount > 0)
+            var insertedTradeCount = 0;
+            IReadOnlyList<TradeGapAffectedFile> affectedFiles;
+            if (fetchedTradeBatch.Count > 0)
             {
-                affectedFiles = await RewriteFilesAsync(request, existingFiles, mergedTrades, cancellationToken).ConfigureAwait(false);
+                var spliceResult = await SpliceFetchedTradesIntoLocalFiles(request, existingFiles, fetchedTradeBatch, cancellationToken).ConfigureAwait(false);
+                insertedTradeCount = spliceResult.InsertedTradeCount;
+                affectedFiles = spliceResult.AffectedFiles;
                 _log.Info($"Persisted {insertedTradeCount} inserted trade(s) across {affectedFiles.Count} file(s) for {request.Exchange}:{request.Symbol}.");
             }
             else
             {
-                affectedFiles.AddRange(existingFiles.Select(static file => new TradeGapAffectedFile(file.RelativePath, file.TradingDay)));
+                affectedFiles = existingFiles
+                    .Select(static file => new TradeGapAffectedFile(file.RelativePath, file.TradingDay))
+                    .ToList();
                 _log.Info($"Gap healing produced no local file changes for {request.Exchange}:{request.Symbol} in range {request.MissingTradeIdStart}-{request.MissingTradeIdEnd}.");
             }
 
@@ -116,55 +117,13 @@ public sealed class LocalFileTradeGapHealer(
         return result;
     }
 
-    private static TradeGapHealStatus DetermineOutcome(int insertedTradeCount, bool hasFullRequestedCoverage)
-    {
-        var result = TradeGapHealStatus.NoChange;
-
-        if (insertedTradeCount > 0)
-        {
-            result = hasFullRequestedCoverage ? TradeGapHealStatus.Full : TradeGapHealStatus.Partial;
-        }
-
-        return result;
-    }
-
-    private static List<TradeInfo> MergeTrades(
-        IReadOnlyList<ExistingTrade> existingTrades,
-        IReadOnlyList<TradeInfo> fetchedTrades,
-        out int insertedTradeCount)
-    {
-        var tradesByKey = new Dictionary<TradeKey, TradeInfo>();
-        foreach (var existingTrade in existingTrades)
-        {
-            tradesByKey.TryAdd(existingTrade.Trade.Key, existingTrade.Trade);
-        }
-
-        insertedTradeCount = 0;
-        foreach (var fetchedTrade in fetchedTrades)
-        {
-            if (tradesByKey.TryAdd(fetchedTrade.Key, fetchedTrade))
-            {
-                insertedTradeCount++;
-            }
-        }
-
-        var result = tradesByKey
-            .Values
-            .OrderBy(static trade => ParseNumericTradeId(trade.Key.TradeId, "Trade id must be numeric."))
-            .ThenBy(static trade => trade.Timestamp.ToUniversalTime())
-            .ThenBy(static trade => trade.Key.Exchange.Value, StringComparer.Ordinal)
-            .ThenBy(static trade => trade.Key.Symbol.ToString(), StringComparer.Ordinal)
-            .ToList();
-        return result;
-    }
-
     private static IReadOnlyList<MissingTradeIdRange> DetermineUnresolvedTradeRanges(
-        IReadOnlyList<TradeInfo> fetchedTrades,
+        IReadOnlyList<FetchedTrade> fetchedTrades,
         MissingTradeIdRange requestedRange)
     {
         var result = new List<MissingTradeIdRange>();
         var uniqueTradeIds = fetchedTrades
-            .Select(static trade => ParseNumericTradeId(trade.Key.TradeId, "Fetched trade id must be numeric."))
+            .Select(static trade => trade.NumericTradeId)
             .Distinct()
             .OrderBy(static tradeId => tradeId)
             .ToArray();
@@ -186,6 +145,39 @@ public sealed class LocalFileTradeGapHealer(
         if (nextExpectedTradeId <= requestedRange.LastTradeId)
         {
             result.Add(new MissingTradeIdRange(nextExpectedTradeId, requestedRange.LastTradeId));
+        }
+
+        return result;
+    }
+
+    private static TradeGapHealStatus DetermineOutcome(int insertedTradeCount, bool hasFullRequestedCoverage)
+    {
+        var result = TradeGapHealStatus.NoChange;
+
+        if (insertedTradeCount > 0)
+        {
+            result = hasFullRequestedCoverage ? TradeGapHealStatus.Full : TradeGapHealStatus.Partial;
+        }
+
+        return result;
+    }
+
+    private static List<FetchedTrade> PrepareFetchedTradesForSplice(IReadOnlyList<TradeInfo> fetchedTrades)
+    {
+        var result = fetchedTrades
+            .Select(static trade => new FetchedTrade(
+                trade,
+                ParseNumericTradeId(trade.Key.TradeId, "Fetched trade id must be numeric.")))
+            .OrderBy(static trade => trade.NumericTradeId)
+            .ThenBy(static trade => trade.Trade.Timestamp.ToUniversalTime())
+            .ToList();
+
+        for (var index = 1; index < result.Count; index++)
+        {
+            if (result[index].NumericTradeId == result[index - 1].NumericTradeId)
+            {
+                throw new InvalidOperationException($"Fetched batch contains duplicate trade id '{result[index].NumericTradeId}'.");
+            }
         }
 
         return result;
@@ -256,31 +248,6 @@ public sealed class LocalFileTradeGapHealer(
                     var relativePath = Path.GetRelativePath(request.RootDirectory, fullPath);
                     result.Add(new ResolvedFile(fullPath, relativePath, TryParseTradingDay(relativePath)));
                 }
-            }
-        }
-
-        return result;
-    }
-
-    private static async Task<List<ExistingTrade>> ReadExistingTradesAsync(
-        TradeGapHealRequest request,
-        IReadOnlyList<ResolvedFile> files,
-        CancellationToken cancellationToken)
-    {
-        var result = new List<ExistingTrade>();
-        foreach (var file in files)
-        {
-            var lineNumber = 0;
-            await foreach (var line in File.ReadLinesAsync(file.FullPath, cancellationToken).ConfigureAwait(false))
-            {
-                lineNumber++;
-                if (string.IsNullOrWhiteSpace(line))
-                {
-                    continue;
-                }
-
-                var trade = ParseExistingTrade(line, request, file.FullPath, lineNumber);
-                result.Add(new ExistingTrade(trade, file.RelativePath, file.TradingDay));
             }
         }
 
@@ -378,7 +345,12 @@ public sealed class LocalFileTradeGapHealer(
             return relativePath;
         }
 
-        var result = Path.Combine(request.Symbol.ToString(), tradingDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".jsonl");
+        var baseDirectory = request.CandidateFiles.Count > 0
+            ? Path.GetDirectoryName(request.CandidateFiles[0].Path)
+            : request.Symbol.ToString();
+        var result = string.IsNullOrWhiteSpace(baseDirectory)
+            ? tradingDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".jsonl"
+            : Path.Combine(baseDirectory, tradingDay.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".jsonl");
         return result;
     }
 
@@ -406,91 +378,71 @@ public sealed class LocalFileTradeGapHealer(
         return result;
     }
 
-    private static List<FileRewritePlan> BuildRewritePlans(
+    private static async Task<SpliceResult> SpliceFetchedTradesIntoLocalFiles(
         TradeGapHealRequest request,
         IReadOnlyList<ResolvedFile> existingFiles,
-        IReadOnlyList<TradeInfo> mergedTrades)
-    {
-        var tradesByRelativePath = new Dictionary<string, List<TradeInfo>>(StringComparer.Ordinal);
-        var relativePathByDay = BuildRelativePathByDay(existingFiles);
-        foreach (var trade in mergedTrades)
-        {
-            var tradingDay = DateOnly.FromDateTime(trade.Timestamp.ToUniversalTime().UtcDateTime);
-            var relativePath = ResolveRelativePathForDay(request, relativePathByDay, tradingDay);
-            if (!tradesByRelativePath.TryGetValue(relativePath, out var dayTrades))
-            {
-                dayTrades = [];
-                tradesByRelativePath[relativePath] = dayTrades;
-            }
-
-            dayTrades.Add(trade);
-        }
-
-        var existingFilesByPath = existingFiles.ToDictionary(static file => file.RelativePath, StringComparer.Ordinal);
-        var result = new List<FileRewritePlan>(tradesByRelativePath.Count);
-        foreach (var pair in tradesByRelativePath.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
-        {
-            var payload = TradeJsonlFile.BuildPayload(
-                pair.Value
-                    .OrderBy(static trade => ParseNumericTradeId(trade.Key.TradeId, "Trade id must be numeric."))
-                    .ThenBy(static trade => trade.Timestamp.ToUniversalTime())
-                    .ToList());
-            var fullPath = Path.GetFullPath(Path.Combine(request.RootDirectory, pair.Key));
-            var tradingDay = TryParseTradingDay(pair.Key);
-            var existingFullPath = existingFilesByPath.TryGetValue(pair.Key, out var existingFile)
-                ? existingFile.FullPath
-                : null;
-
-            result.Add(new FileRewritePlan(pair.Key, fullPath, existingFullPath, tradingDay, payload));
-        }
-
-        return result;
-    }
-
-    private static async Task<List<TradeGapAffectedFile>> RewriteFilesAsync(
-        TradeGapHealRequest request,
-        IReadOnlyList<ResolvedFile> existingFiles,
-        IReadOnlyList<TradeInfo> mergedTrades,
+        IReadOnlyList<FetchedTrade> fetchedTrades,
         CancellationToken cancellationToken)
     {
-        var rewritePlans = BuildRewritePlans(request, existingFiles, mergedTrades);
-        var stagedFiles = await StageTempFilesAsync(rewritePlans, cancellationToken).ConfigureAwait(false);
-        await ReplaceFilesAsync(stagedFiles).ConfigureAwait(false);
+        var outputWriter = new SpliceOutputWriter(request, existingFiles);
+        var insertedTradeCount = 0;
+        var fetchedTradeIndex = 0;
 
-        var result = stagedFiles
-            .OrderBy(static file => file.Plan.RelativePath, StringComparer.Ordinal)
-            .Select(static file => new TradeGapAffectedFile(file.Plan.RelativePath, file.Plan.TradingDay))
-            .ToList();
-        return result;
-    }
-
-    private static async Task<List<StagedFile>> StageTempFilesAsync(
-        IReadOnlyList<FileRewritePlan> rewritePlans,
-        CancellationToken cancellationToken)
-    {
-        var result = new List<StagedFile>(rewritePlans.Count);
         try
         {
-            foreach (var rewritePlan in rewritePlans)
+            foreach (var existingFile in existingFiles.OrderBy(static file => file.RelativePath, StringComparer.Ordinal))
             {
-                var directory = Path.GetDirectoryName(rewritePlan.FullPath);
-                if (!string.IsNullOrWhiteSpace(directory))
+                var lineNumber = 0;
+                await foreach (var line in File.ReadLinesAsync(existingFile.FullPath, cancellationToken).ConfigureAwait(false))
                 {
-                    Directory.CreateDirectory(directory);
-                }
+                    cancellationToken.ThrowIfCancellationRequested();
 
-                var tempPath = rewritePlan.FullPath + ".healing." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".tmp";
-                await File.WriteAllTextAsync(tempPath, rewritePlan.Payload, cancellationToken).ConfigureAwait(false);
-                result.Add(new StagedFile(rewritePlan, tempPath, rewritePlan.FullPath + ".healing." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".bak"));
+                    lineNumber++;
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        continue;
+                    }
+
+                    var localTrade = ParseExistingTrade(line, request, existingFile.FullPath, lineNumber);
+                    var localTradeId = ParseNumericTradeId(
+                        localTrade.Key.TradeId,
+                        FormattableString.Invariant($"TradeId '{localTrade.Key.TradeId}' at line {lineNumber} in '{existingFile.FullPath}' is not numeric."));
+
+                    while (fetchedTradeIndex < fetchedTrades.Count && fetchedTrades[fetchedTradeIndex].NumericTradeId < localTradeId)
+                    {
+                        await outputWriter.WriteTrade(fetchedTrades[fetchedTradeIndex].Trade, cancellationToken).ConfigureAwait(false);
+                        insertedTradeCount++;
+                        fetchedTradeIndex++;
+                    }
+
+                    if (fetchedTradeIndex < fetchedTrades.Count && fetchedTrades[fetchedTradeIndex].NumericTradeId == localTradeId)
+                    {
+                        throw new InvalidOperationException(
+                            FormattableString.Invariant(
+                                $"Fetched trade id '{localTradeId}' overlaps existing local trade id in '{existingFile.FullPath}' at line {lineNumber}."));
+                    }
+
+                    await outputWriter.WriteTrade(localTrade, cancellationToken).ConfigureAwait(false);
+                }
             }
+
+            while (fetchedTradeIndex < fetchedTrades.Count)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await outputWriter.WriteTrade(fetchedTrades[fetchedTradeIndex].Trade, cancellationToken).ConfigureAwait(false);
+                insertedTradeCount++;
+                fetchedTradeIndex++;
+            }
+
+            var affectedFiles = await outputWriter.Commit().ConfigureAwait(false);
+            var result = new SpliceResult(insertedTradeCount, affectedFiles);
+            return result;
         }
         catch
         {
-            CleanupStageArtifacts(result);
+            await outputWriter.DisposeAsync().ConfigureAwait(false);
             throw;
         }
-
-        return result;
     }
 
     private static Task ReplaceFilesAsync(IReadOnlyList<StagedFile> stagedFiles)
@@ -500,15 +452,15 @@ public sealed class LocalFileTradeGapHealer(
         {
             foreach (var stagedFile in stagedFiles)
             {
-                if (File.Exists(stagedFile.Plan.FullPath))
+                if (File.Exists(stagedFile.FullPath))
                 {
-                    File.Replace(stagedFile.TempPath, stagedFile.Plan.FullPath, stagedFile.BackupPath, true);
-                    appliedChanges.Add(new AppliedChange(stagedFile.Plan.FullPath, stagedFile.BackupPath, false));
+                    File.Replace(stagedFile.TempPath, stagedFile.FullPath, stagedFile.BackupPath, true);
+                    appliedChanges.Add(new AppliedChange(stagedFile.FullPath, stagedFile.BackupPath, false));
                 }
                 else
                 {
-                    File.Move(stagedFile.TempPath, stagedFile.Plan.FullPath);
-                    appliedChanges.Add(new AppliedChange(stagedFile.Plan.FullPath, null, true));
+                    File.Move(stagedFile.TempPath, stagedFile.FullPath);
+                    appliedChanges.Add(new AppliedChange(stagedFile.FullPath, null, true));
                 }
             }
         }
@@ -571,27 +523,104 @@ public sealed class LocalFileTradeGapHealer(
     }
 
     /// <summary>
-    /// Represents one local trade line already present in the dataset together with its source file metadata.
-    /// </summary>
-    private sealed record ExistingTrade(TradeInfo Trade, string RelativePath, DateOnly? TradingDay);
-
-    /// <summary>
     /// Represents one resolved candidate JSONL file.
     /// </summary>
     private sealed record ResolvedFile(string FullPath, string RelativePath, DateOnly? TradingDay);
 
     /// <summary>
-    /// Represents one planned file rewrite.
+    /// Represents one fetched trade prepared for numeric splice ordering.
     /// </summary>
-    private sealed record FileRewritePlan(string RelativePath, string FullPath, string? ExistingFullPath, DateOnly? TradingDay, string Payload);
+    private sealed record FetchedTrade(TradeInfo Trade, long NumericTradeId);
 
     /// <summary>
     /// Represents one staged temp file and its associated rollback backup path.
     /// </summary>
-    private sealed record StagedFile(FileRewritePlan Plan, string TempPath, string BackupPath);
+    private sealed record StagedFile(string RelativePath, string FullPath, DateOnly? TradingDay, string TempPath, string BackupPath);
 
     /// <summary>
     /// Represents one applied filesystem change that may need rollback.
     /// </summary>
     private sealed record AppliedChange(string FullPath, string? BackupPath, bool CreatedNewFile);
+
+    /// <summary>
+    /// Represents one splice operation result.
+    /// </summary>
+    private sealed record SpliceResult(int InsertedTradeCount, IReadOnlyList<TradeGapAffectedFile> AffectedFiles);
+
+    /// <summary>
+    /// Streams spliced JSONL output into staged temp files by UTC day.
+    /// </summary>
+    private sealed class SpliceOutputWriter(TradeGapHealRequest request, IReadOnlyList<LocalFileTradeGapHealer.ResolvedFile> existingFiles) : IAsyncDisposable
+    {
+        private readonly Dictionary<DateOnly, string> _relativePathByDay = BuildRelativePathByDay(existingFiles ?? throw new ArgumentNullException(nameof(existingFiles)));
+        private readonly TradeGapHealRequest _request = request ?? throw new ArgumentNullException(nameof(request));
+        private readonly Dictionary<string, StagedFile> _stagedFilesByPath = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, StreamWriter> _writersByPath = new(StringComparer.Ordinal);
+
+        public async Task<IReadOnlyList<TradeGapAffectedFile>> Commit()
+        {
+            foreach (var writer in _writersByPath.Values)
+            {
+                await writer.FlushAsync().ConfigureAwait(false);
+                await writer.DisposeAsync().ConfigureAwait(false);
+            }
+
+            _writersByPath.Clear();
+
+            var stagedFiles = _stagedFilesByPath.Values
+                .OrderBy(static file => file.RelativePath, StringComparer.Ordinal)
+                .ToList();
+            await ReplaceFilesAsync(stagedFiles).ConfigureAwait(false);
+
+            return stagedFiles
+                .Select(static file => new TradeGapAffectedFile(file.RelativePath, file.TradingDay))
+                .ToList();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var writer in _writersByPath.Values)
+            {
+                await writer.DisposeAsync().ConfigureAwait(false);
+            }
+
+            _writersByPath.Clear();
+            CleanupStageArtifacts(_stagedFilesByPath.Values.ToList());
+        }
+
+        public async Task WriteTrade(TradeInfo trade, CancellationToken terminator)
+        {
+            terminator.ThrowIfCancellationRequested();
+
+            var tradingDay = DateOnly.FromDateTime(trade.Timestamp.ToUniversalTime().UtcDateTime);
+            var relativePath = ResolveRelativePathForDay(_request, _relativePathByDay, tradingDay);
+            var writer = await GetWriter(relativePath, tradingDay).ConfigureAwait(false);
+            await writer.WriteLineAsync(TradeJsonlFile.SerializeTrade(trade)).ConfigureAwait(false);
+        }
+
+        private Task<StreamWriter> GetWriter(string relativePath, DateOnly tradingDay)
+        {
+            if (_writersByPath.TryGetValue(relativePath, out var existingWriter))
+            {
+                return Task.FromResult(existingWriter);
+            }
+
+            var fullPath = Path.GetFullPath(Path.Combine(_request.RootDirectory, relativePath));
+            var directory = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var tempPath = fullPath + ".healing." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".tmp";
+            var backupPath = fullPath + ".healing." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".bak";
+            var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            var writer = new StreamWriter(stream);
+            var stagedFile = new StagedFile(relativePath, fullPath, tradingDay, tempPath, backupPath);
+
+            _writersByPath[relativePath] = writer;
+            _stagedFilesByPath[relativePath] = stagedFile;
+            return Task.FromResult(writer);
+        }
+    }
 }

@@ -237,6 +237,191 @@ public sealed class QuantaCandleRunnerTests
     }
 
     [Fact]
+    public async Task HealDispatchesBoundaryAndInteriorGapsAsExactRanges()
+    {
+        var workDirectory = CreateTempRoot();
+        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = new Mock<ITradeGapScanAugmenter>(MockBehavior.Strict);
+        var healRequests = new List<TradeGapHealRequest>();
+        var relativePath = Path.Combine("Binance", "BTC-USDT", "2026-03-12.jsonl");
+        var interiorGap = CreateGapWithRange(
+            "Binance",
+            "BTC-USDT",
+            103,
+            103,
+            relativePath,
+            2,
+            3,
+            "102",
+            "104");
+        var startBoundaryGap = CreateGapWithRange(
+            "Binance",
+            "BTC-USDT",
+            100,
+            101,
+            relativePath,
+            1,
+            1,
+            "102",
+            "102");
+        var endBoundaryGap = CreateGapWithRange(
+            "Binance",
+            "BTC-USDT",
+            105,
+            106,
+            relativePath,
+            4,
+            4,
+            "104",
+            "104",
+            toInclusiveTradeId: "106");
+        var baseScanResult = new TradeGapScanResult(
+            1,
+            4,
+            0,
+            [interiorGap.Gap],
+            [new TradeGapAffectedFile(relativePath, new DateOnly(2026, 3, 12))],
+            [interiorGap.Range!]);
+        var augmentedScanResult = new TradeGapScanResult(
+            1,
+            4,
+            0,
+            [interiorGap.Gap, startBoundaryGap.Gap, endBoundaryGap.Gap],
+            [new TradeGapAffectedFile(relativePath, new DateOnly(2026, 3, 12))],
+            [interiorGap.Range!, startBoundaryGap.Range!, endBoundaryGap.Range!]);
+
+        scannerMoq
+            .Setup(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<TradeGapScanResult>(baseScanResult));
+        scanAugmenterMoq
+            .Setup(mock => mock.Augment(It.IsAny<TradeGapScanRequest>(), baseScanResult, It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<TradeGapScanResult>(augmentedScanResult));
+        healerMoq
+            .Setup(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TradeGapHealRequest, CancellationToken>((request, _) => healRequests.Add(request))
+            .Returns<TradeGapHealRequest, CancellationToken>((request, _) => new ValueTask<TradeGapHealResult>(CreateHealResult(request, TradeGapHealStatus.Full)));
+
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            Directory.CreateDirectory(instrumentDirectory);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-03-12.jsonl"), "{}", CancellationToken.None);
+
+            var exitCode = await sut.Heal(
+                new CliOptions(CliMode.Heal, workDirectory, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 3, 12)]),
+                outputWriter,
+                CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(3, healRequests.Count);
+            Assert.Equal([100L, 103L, 105L], healRequests.Select(static request => request.MissingTradeIdStart).ToArray());
+            Assert.Equal([101L, 103L, 106L], healRequests.Select(static request => request.MissingTradeIdEnd).ToArray());
+            Assert.All(healRequests, request =>
+            {
+                var candidateFile = Assert.Single(request.CandidateFiles);
+                Assert.Equal(relativePath, candidateFile.Path);
+            });
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(workDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task HealDoesNotDispatchBoundaryRepairWhenAugmentedScanFindsNoGaps()
+    {
+        var workDirectory = CreateTempRoot();
+        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = new Mock<ITradeGapScanAugmenter>(MockBehavior.Strict);
+        var scanResult = new TradeGapScanResult(
+            1,
+            2,
+            0,
+            [],
+            [new TradeGapAffectedFile(Path.Combine("Binance", "BTC-USDT", "2026-03-12.jsonl"), new DateOnly(2026, 3, 12))],
+            []);
+
+        scannerMoq
+            .Setup(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<TradeGapScanResult>(scanResult));
+        scanAugmenterMoq
+            .Setup(mock => mock.Augment(It.IsAny<TradeGapScanRequest>(), scanResult, It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<TradeGapScanResult>(scanResult));
+
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            Directory.CreateDirectory(instrumentDirectory);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-03-12.jsonl"), "{}", CancellationToken.None);
+
+            var exitCode = await sut.Heal(
+                new CliOptions(CliMode.Heal, workDirectory, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 3, 12)]),
+                outputWriter,
+                CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            healerMoq.Verify(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(workDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task HealPropagatesBoundaryResolutionFailureFromAugmenter()
+    {
+        var workDirectory = CreateTempRoot();
+        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = new Mock<ITradeGapScanAugmenter>(MockBehavior.Strict);
+        var scanResult = new TradeGapScanResult(
+            1,
+            2,
+            0,
+            [],
+            [new TradeGapAffectedFile(Path.Combine("Binance", "BTC-USDT", "2026-03-12.jsonl"), new DateOnly(2026, 3, 12))],
+            []);
+
+        scannerMoq
+            .Setup(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<TradeGapScanResult>(scanResult));
+        scanAugmenterMoq
+            .Setup(mock => mock.Augment(It.IsAny<TradeGapScanRequest>(), scanResult, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TradeDayBoundaryVerificationException(new ExchangeId("Binance"), Instrument.Parse("BTC-USDT"), new DateOnly(2026, 3, 12), 123));
+
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            Directory.CreateDirectory(instrumentDirectory);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-03-12.jsonl"), "{}", CancellationToken.None);
+
+            await Assert.ThrowsAsync<TradeDayBoundaryVerificationException>(() => sut.Heal(
+                new CliOptions(CliMode.Heal, workDirectory, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 3, 12)]),
+                outputWriter,
+                CancellationToken.None));
+
+            healerMoq.Verify(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(workDirectory);
+        }
+    }
+
+    [Fact]
     public async Task ScanWithRequestedDatesFailsExplicitlyWhenFilesAreMissing()
     {
         var workDirectory = CreateTempRoot();
@@ -392,6 +577,59 @@ public sealed class QuantaCandleRunnerTests
                 new TradeWatermark("103", new DateTimeOffset(2026, 3, 12, 0, 0, 4, TimeSpan.Zero)),
                 new MissingTradeIdRange(missingTradeIdStart, missingTradeIdEnd));
 
+        return result;
+    }
+
+    private static (TradeGap Gap, TradeGapAffectedRange? Range) CreateGapWithRange(
+        string exchange,
+        string instrument,
+        long missingTradeIdStart,
+        long missingTradeIdEnd,
+        string relativePath,
+        int fromLine,
+        int toLine,
+        string fromTradeId,
+        string toRangeTradeId,
+        string? toInclusiveTradeId = null)
+    {
+        var fromTimestamp = new DateTimeOffset(2026, 3, 12, 0, 0, Math.Max(fromLine, 1), TimeSpan.Zero);
+        var toTimestamp = new DateTimeOffset(2026, 3, 12, 0, 0, Math.Max(toLine, 1) + 1, TimeSpan.Zero);
+        var gap = TradeGap
+            .CreateOpen(
+                Guid.NewGuid(),
+                new ExchangeId(exchange),
+                Instrument.Parse(instrument),
+                new TradeWatermark(fromTradeId, fromTimestamp),
+                toTimestamp)
+            .ToBounded(
+                new TradeWatermark(toInclusiveTradeId ?? toRangeTradeId, toTimestamp),
+                new MissingTradeIdRange(missingTradeIdStart, missingTradeIdEnd));
+        var range = new TradeGapAffectedRange(
+            new TradeWatermark(fromTradeId, fromTimestamp),
+            new TradeWatermark(toRangeTradeId, toTimestamp),
+            new TradeGapBoundaryLocation(relativePath, fromLine),
+            new TradeGapBoundaryLocation(relativePath, toLine));
+        return (gap, range);
+    }
+
+    private static TradeGapHealResult CreateHealResult(TradeGapHealRequest request, TradeGapHealStatus outcome)
+    {
+        var result = new TradeGapHealResult(
+            request.Exchange,
+            request.Symbol,
+            outcome,
+            new MissingTradeIdRange(request.MissingTradeIdStart, request.MissingTradeIdEnd),
+            request.MissingTradeIdEnd - request.MissingTradeIdStart + 1 > int.MaxValue
+                ? throw new InvalidOperationException("Requested range is unexpectedly large.")
+                : (int)(request.MissingTradeIdEnd - request.MissingTradeIdStart + 1),
+            request.MissingTradeIdEnd - request.MissingTradeIdStart + 1 > int.MaxValue
+                ? throw new InvalidOperationException("Requested range is unexpectedly large.")
+                : (int)(request.MissingTradeIdEnd - request.MissingTradeIdStart + 1),
+            outcome == TradeGapHealStatus.Full,
+            [],
+            [],
+            request.CandidateFiles,
+            []);
         return result;
     }
 

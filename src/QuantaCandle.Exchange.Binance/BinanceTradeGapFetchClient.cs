@@ -23,7 +23,7 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
         ValidateRequestedRange(startId, endId);
 
         var requestedSymbol = BinanceSymbol.ToRestSymbol(instrument);
-        var fetchedTrades = new List<TradeInfo>();
+        var result = new List<TradeInfo>();
         var nextTradeId = startId;
 
         while (nextTradeId <= endId)
@@ -44,15 +44,25 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
                 break;
             }
 
-            SortTradesByNumericTradeId(pageTrades);
-            fetchedTrades.AddRange(pageTrades);
+            result.AddRange(pageTrades);
             nextTradeId = BinanceHelper.GetTradeId(pageTrades[^1]) + 1;
         }
+        var firstId = BinanceHelper.GetTradeId(result[0]);
+        var lastId = BinanceHelper.GetTradeId(result[^1]);
 
-        SortTradesByNumericTradeId(fetchedTrades);
-        EnsureUniqueTradeIds(fetchedTrades);
+        if (firstId != startId)
+        {
+            throw new Exception($"Unexpected first trade ID of '{firstId}' is returned by the exchange. Expected '{startId}'.");
+        }
+        else if (lastId != endId)
+        {
+            throw new Exception($"Unexpected last trade ID of '{lastId}' is returned by the exchange. Expected '{endId}'.");
+        }
+        else if (lastId != startId + result.Count - 1)
+        {
+            throw new Exception($"Unexpected trade sequence retruned by the exchange. First ID is '{firstId}', last ID is '{lastId}', but expected {endId - startId + 1} trades.");
+        }
 
-        IReadOnlyList<TradeInfo> result = fetchedTrades;
         return result;
     }
 
@@ -70,19 +80,6 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
         var result = new Uri(_http.BaseAddress ?? BinanceHelper.RestBaseAddress, path);
 
         return result;
-    }
-
-    private static void EnsureUniqueTradeIds(List<TradeInfo> trades)
-    {
-        for (var i = 1; i < trades.Count; i++)
-        {
-            var currentTradeId = BinanceHelper.GetTradeId(trades[i]);
-            var previousTradeId = BinanceHelper.GetTradeId(trades[i - 1]);
-            if (currentTradeId == previousTradeId)
-            {
-                throw new InvalidOperationException($"Binance gap fetch returned duplicate trade id '{currentTradeId}'.");
-            }
-        }
     }
 
     private static List<TradeInfo> ParseTrades(
@@ -117,11 +114,6 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
         return result;
     }
 
-    private static void SortTradesByNumericTradeId(List<TradeInfo> trades)
-    {
-        trades.Sort(static (left, right) => BinanceHelper.GetTradeId(left).CompareTo(BinanceHelper.GetTradeId(right)));
-    }
-
     private static void ValidateOptionalInstrumentData(JsonElement payload, string requestedSymbol, int index)
     {
         var payloadExchange = BinanceHelper.GetOptionalString(payload, "exchange", index, "trade");
@@ -143,12 +135,12 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
     {
         if (missingTradeIdStart <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(missingTradeIdStart), missingTradeIdStart, "Missing trade id start must be positive.");
+            throw new ArgumentOutOfRangeException(nameof(missingTradeIdStart), missingTradeIdStart, "Missing trade ID start must be positive.");
         }
 
         if (missingTradeIdEnd < missingTradeIdStart)
         {
-            throw new ArgumentOutOfRangeException(nameof(missingTradeIdEnd), missingTradeIdEnd, "Missing trade id end must be greater than or equal to missing trade id start.");
+            throw new ArgumentOutOfRangeException(nameof(missingTradeIdEnd), missingTradeIdEnd, "Missing trade ID end must be greater than or equal to missing trade ID start.");
         }
     }
 
@@ -157,7 +149,7 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
         if (tradeId < requestedStartTradeId || tradeId > requestedEndTradeId)
         {
             throw new InvalidOperationException(
-                $"Binance trade payload at index {index} returned out-of-range trade id '{tradeId}'. Requested range is {requestedStartTradeId}-{requestedEndTradeId}.");
+                $"Binance trade payload at index {index} returned out-of-range trade ID '{tradeId}'. Requested range is {requestedStartTradeId}-{requestedEndTradeId}.");
         }
     }
 }
