@@ -7,6 +7,7 @@ using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
 using QuantaCandle.Exchange.Binance;
 using QuantaCandle.Infra.Pipeline;
+using QuantaCandle.Infra.Storage;
 using QuantaCandle.Infra.Time;
 
 using SimpleInjector;
@@ -38,6 +39,7 @@ public static class TradeRecorderCompositionRoot
         container.RegisterSingleton<ConsoleCheckpointHotkeyListener>();
         container.RegisterSingleton<TradePipelineStats>();
         container.RegisterSingleton<ITradeDeduplicator, InMemoryTradeDeduplicator>();
+        container.RegisterSingleton<ITradeGapScanner, LocalFileTradeGapScanner>();
 
         RegisterTradeSource(container, options.SourceRegistration);
         RegisterTradeSink(container, options.SinkRegistration);
@@ -50,6 +52,11 @@ public static class TradeRecorderCompositionRoot
         if (tradeSourceRegistration.BinanceOptions is not null)
         {
             container.RegisterInstance(tradeSourceRegistration.BinanceOptions);
+            container.RegisterSingleton(() => new HttpClient());
+            container.RegisterSingleton<ITradeGapFetchClient, BinanceTradeGapFetchClient>();
+            container.RegisterSingleton<IBinanceRawTradeLookupClient, BinanceRawTradeLookupClient>();
+            container.RegisterSingleton<ITradeDayBoundaryResolver, TradeDayBoundaryResolver>();
+            container.RegisterSingleton<ITradeGapHealer, LocalFileTradeGapHealer>();
             container.RegisterSingleton<ITradeSource, BinanceTradeSource>();
         }
         else
@@ -72,7 +79,7 @@ public static class TradeRecorderCompositionRoot
             container.RegisterSingleton<ITradeFinalizedFileDispatcher>(() => container.GetInstance<TradeSinkFileSimple>());
             container.RegisterSingleton<ITradeSnapshotFileDispatcher>(() => container.GetInstance<TradeSinkFileSimple>());
             container.RegisterSingleton<ITradeRecorderStartupTask>(() => new TradeFinalizedFileStartupDispatcher(fileOptions.OutputDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ILogMachina<TradeFinalizedFileStartupDispatcher>>()));
-            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(container.GetInstance<IClock>(), fileOptions.OutputDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ITradeSnapshotFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
+            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(container.GetInstance<IClock>(), fileOptions.OutputDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ITradeSnapshotFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ITradeGapScanner>(), GetOptionalInstance<ITradeGapHealer>(container), GetOptionalInstance<ITradeDayBoundaryResolver>(container), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
         }
         else if (tradeSinkRegistration.S3Options is not null)
         {
@@ -85,7 +92,7 @@ public static class TradeRecorderCompositionRoot
             container.RegisterSingleton<ITradeFinalizedFileDispatcher>(() => container.GetInstance<TradeSinkS3Simple>());
             container.RegisterSingleton<ITradeSnapshotFileDispatcher>(() => container.GetInstance<TradeSinkS3Simple>());
             container.RegisterSingleton<ITradeRecorderStartupTask>(() => new TradeFinalizedFileStartupDispatcher(s3Options.LocalRootDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ILogMachina<TradeFinalizedFileStartupDispatcher>>()));
-            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(container.GetInstance<IClock>(), s3Options.LocalRootDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ITradeSnapshotFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
+            container.RegisterSingleton<ITradeCheckpointLifecycle>(() => new TradeScratchCheckpointLifecycle(container.GetInstance<IClock>(), s3Options.LocalRootDirectory, container.GetInstance<ITradeFinalizedFileDispatcher>(), container.GetInstance<ITradeSnapshotFileDispatcher>(), container.GetInstance<IIngestionStateStore>(), container.GetInstance<ITradeGapScanner>(), GetOptionalInstance<ITradeGapHealer>(container), GetOptionalInstance<ITradeDayBoundaryResolver>(container), container.GetInstance<ILogMachina<TradeScratchCheckpointLifecycle>>()));
         }
         else
         {
@@ -96,5 +103,19 @@ public static class TradeRecorderCompositionRoot
             container.RegisterSingleton<ITradeFinalizedFileDispatcher>(() => container.GetInstance<TradeSinkNull>());
             container.RegisterSingleton<ITradeSnapshotFileDispatcher>(() => container.GetInstance<TradeSinkNull>());
         }
+    }
+
+    private static TService? GetOptionalInstance<TService>(Container container)
+        where TService : class
+    {
+        TService? result = null;
+        var registration = container.GetRegistration(typeof(TService), throwOnFailure: false);
+
+        if (registration is not null)
+        {
+            result = container.GetInstance<TService>();
+        }
+
+        return result;
     }
 }

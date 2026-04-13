@@ -21,7 +21,18 @@ public static class TradeLocalDailyFilePath
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localRootDirectory);
 
-        var result = Path.Combine(localRootDirectory, exchange.ToString(), instrument.ToString(), $"{utcDate:yyyy-MM-dd}.jsonl");
+        var result = Path.Combine(localRootDirectory, exchange.ToString(), instrument.ToString(), BuildFinalizedFileName(utcDate));
+        return result;
+    }
+
+    /// <summary>
+    /// Builds the local JSONL path for one partial instrument UTC day.
+    /// </summary>
+    public static string BuildPartial(string localRootDirectory, ExchangeId exchange, Instrument instrument, DateOnly utcDate)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(localRootDirectory);
+
+        var result = Path.Combine(localRootDirectory, exchange.ToString(), instrument.ToString(), BuildPartialFinalizedFileName(utcDate));
         return result;
     }
 
@@ -56,13 +67,18 @@ public static class TradeLocalDailyFilePath
         ArgumentException.ThrowIfNullOrWhiteSpace(localRootDirectory);
         ArgumentException.ThrowIfNullOrWhiteSpace(finalizedFilePath);
 
-        var expectedPath = Build(localRootDirectory, exchange, instrument, utcDate);
-        if (!string.Equals(expectedPath, finalizedFilePath, StringComparison.OrdinalIgnoreCase))
+        var expectedDirectory = Path.Combine(localRootDirectory, exchange.ToString(), instrument.ToString());
+        var actualDirectory = Path.GetDirectoryName(finalizedFilePath);
+        var hasExpectedFileName = TryParseCompletedUtcDate(finalizedFilePath, out var actualUtcDate)
+            && actualUtcDate == utcDate;
+
+        if (!string.Equals(expectedDirectory, actualDirectory, StringComparison.OrdinalIgnoreCase)
+            || !hasExpectedFileName)
         {
-            throw new InvalidOperationException($"Finalized file path must match the configured output directory. Expected '{expectedPath}', actual '{finalizedFilePath}'.");
+            throw new InvalidOperationException($"Finalized file path must match the configured output directory and UTC day. Expected directory '{expectedDirectory}' and UTC day '{utcDate:yyyy-MM-dd}', actual '{finalizedFilePath}'.");
         }
 
-        var result = expectedPath;
+        var result = finalizedFilePath;
         return result;
     }
 
@@ -120,8 +136,7 @@ public static class TradeLocalDailyFilePath
                 continue;
             }
 
-            var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(filePath);
-            if (!DateOnly.TryParseExact(fileNameWithoutExtension, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var utcDate))
+            if (!TryParseCompletedUtcDate(filePath, out var utcDate))
             {
                 continue;
             }
@@ -132,6 +147,34 @@ public static class TradeLocalDailyFilePath
         result = result
             .OrderBy(item => item.UtcDate)
             .ToList();
+
+        return result;
+    }
+
+    private static string BuildFinalizedFileName(DateOnly utcDate)
+    {
+        var result = $"{utcDate:yyyy-MM-dd}.jsonl";
+        return result;
+    }
+
+    private static string BuildPartialFinalizedFileName(DateOnly utcDate)
+    {
+        var result = $"{utcDate:yyyy-MM-dd}.partial.jsonl";
+        return result;
+    }
+
+    private static bool TryParseCompletedUtcDate(string filePath, out DateOnly utcDate)
+    {
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(filePath);
+        var result = DateOnly.TryParseExact(fileNameWithoutExtension, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out utcDate);
+
+        if (!result
+            && !string.IsNullOrWhiteSpace(fileNameWithoutExtension)
+            && fileNameWithoutExtension.EndsWith(".partial", StringComparison.OrdinalIgnoreCase))
+        {
+            var partialDateText = fileNameWithoutExtension[..^".partial".Length];
+            result = DateOnly.TryParseExact(partialDateText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out utcDate);
+        }
 
         return result;
     }

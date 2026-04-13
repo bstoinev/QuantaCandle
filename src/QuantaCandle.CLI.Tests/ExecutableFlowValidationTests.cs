@@ -10,6 +10,7 @@ using QuantaCandle.Core.Trading;
 using QuantaCandle.Infra;
 using QuantaCandle.Infra.Options;
 using QuantaCandle.Infra.Pipeline;
+using QuantaCandle.Infra.Storage;
 
 namespace QuantaCandle.CLI.Tests;
 
@@ -85,6 +86,9 @@ public sealed class ExecutableFlowValidationTests
             sink,
             sink,
             stateStore,
+            new LocalFileTradeGapScanner(),
+            null,
+            null,
             checkpointLifecycleLogMoq.Object);
 
         var worker = new TradeIngestWorker(stateStore, new CheckpointSignal(), checkpointLifecycle, new TradeCheckpointTriggerOptions(1024), deduplicator, stats, logMoq.Object);

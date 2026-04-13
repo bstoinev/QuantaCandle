@@ -67,8 +67,33 @@ public sealed class StrictTradeDayBoundaryScanAugmenter(
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            AppendStartBoundaryGap(boundary, tradePair.FirstTrade, detectedGaps, affectedRanges);
-            AppendEndBoundaryGap(boundary, tradePair.LastTrade, detectedGaps, affectedRanges);
+            var startBoundaryGap = TradeDayBoundaryGapPlanner.CreateStartBoundaryGap(
+                boundary,
+                tradePair.FirstTrade.TradeId,
+                tradePair.FirstTrade.NumericTradeId,
+                tradePair.FirstTrade.Timestamp,
+                tradePair.FirstTrade.RelativeFilePath,
+                tradePair.FirstTrade.LineNumber,
+                tradePair.FirstTrade.Timestamp);
+            if (startBoundaryGap is not null)
+            {
+                detectedGaps.Add(startBoundaryGap.Value.Gap);
+                affectedRanges.Add(startBoundaryGap.Value.AffectedRange);
+            }
+
+            var endBoundaryGap = TradeDayBoundaryGapPlanner.CreateEndBoundaryGap(
+                boundary,
+                tradePair.LastTrade.TradeId,
+                tradePair.LastTrade.NumericTradeId,
+                tradePair.LastTrade.Timestamp,
+                tradePair.LastTrade.RelativeFilePath,
+                tradePair.LastTrade.LineNumber,
+                tradePair.LastTrade.Timestamp);
+            if (endBoundaryGap is not null)
+            {
+                detectedGaps.Add(endBoundaryGap.Value.Gap);
+                affectedRanges.Add(endBoundaryGap.Value.AffectedRange);
+            }
         }
 
         _log.Info($"Boundary scan augmentation appended {detectedGaps.Count - scanResult.DetectedGaps.Count} gap(s) across {scannedFiles.Count} file(s).");
@@ -81,68 +106,6 @@ public sealed class StrictTradeDayBoundaryScanAugmenter(
             scanResult.AffectedFiles,
             affectedRanges);
     }
-
-    private static void AppendEndBoundaryGap(
-        TradeDayBoundary boundary,
-        BoundaryTrade lastTrade,
-        List<TradeGap> detectedGaps,
-        List<TradeGapAffectedRange> affectedRanges)
-    {
-        if (!boundary.HasExpectedLastTradeId || lastTrade.NumericTradeId >= boundary.ExpectedLastTradeId!.Value)
-        {
-            return;
-        }
-
-        var missingTradeIds = new MissingTradeIdRange(lastTrade.NumericTradeId + 1, boundary.ExpectedLastTradeId.Value);
-        var localWatermark = new TradeWatermark(lastTrade.TradeId, lastTrade.Timestamp);
-        var syntheticUpperBoundary = new TradeWatermark(
-            boundary.ExpectedLastTradeId.Value.ToString(CultureInfo.InvariantCulture),
-            CreateNextUtcDayStart(boundary.UtcDate));
-        var gap = TradeGap
-            .CreateOpen(Guid.NewGuid(), boundary.Exchange, boundary.Symbol, localWatermark, lastTrade.Timestamp)
-            .ToBounded(syntheticUpperBoundary, missingTradeIds);
-
-        detectedGaps.Add(gap);
-        affectedRanges.Add(
-            new TradeGapAffectedRange(
-                localWatermark,
-                localWatermark,
-                new TradeGapBoundaryLocation(lastTrade.RelativeFilePath, lastTrade.LineNumber),
-                new TradeGapBoundaryLocation(lastTrade.RelativeFilePath, lastTrade.LineNumber)));
-    }
-
-    private static void AppendStartBoundaryGap(
-        TradeDayBoundary boundary,
-        BoundaryTrade firstTrade,
-        List<TradeGap> detectedGaps,
-        List<TradeGapAffectedRange> affectedRanges)
-    {
-        if (firstTrade.NumericTradeId <= boundary.ExpectedFirstTradeId)
-        {
-            return;
-        }
-
-        var missingTradeIds = new MissingTradeIdRange(boundary.ExpectedFirstTradeId, firstTrade.NumericTradeId - 1);
-        var syntheticLowerBoundary = new TradeWatermark(
-            (boundary.ExpectedFirstTradeId - 1L).ToString(CultureInfo.InvariantCulture),
-            CreateUtcDayStart(boundary.UtcDate));
-        var localWatermark = new TradeWatermark(firstTrade.TradeId, firstTrade.Timestamp);
-        var gap = TradeGap
-            .CreateOpen(Guid.NewGuid(), boundary.Exchange, boundary.Symbol, syntheticLowerBoundary, firstTrade.Timestamp)
-            .ToBounded(localWatermark, missingTradeIds);
-
-        detectedGaps.Add(gap);
-        affectedRanges.Add(
-            new TradeGapAffectedRange(
-                localWatermark,
-                localWatermark,
-                new TradeGapBoundaryLocation(firstTrade.RelativeFilePath, firstTrade.LineNumber),
-                new TradeGapBoundaryLocation(firstTrade.RelativeFilePath, firstTrade.LineNumber)));
-    }
-
-    private static DateTimeOffset CreateNextUtcDayStart(DateOnly tradingDay) => CreateUtcDayStart(tradingDay).AddDays(1);
-
-    private static DateTimeOffset CreateUtcDayStart(DateOnly tradingDay) => new(tradingDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
 
     private static long ParseNumericTradeId(string tradeId, string filePath, int lineNumber)
     {

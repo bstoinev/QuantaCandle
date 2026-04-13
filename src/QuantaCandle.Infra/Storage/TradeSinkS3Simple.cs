@@ -43,7 +43,8 @@ public sealed class TradeSinkS3Simple : ITradeFinalizedFileDispatcher, ITradeSna
         cancellationToken.ThrowIfCancellationRequested();
         _ = TradeLocalDailyFilePath.ValidateFinalized(_options.LocalRootDirectory, exchange, instrument, utcDate, finalizedFilePath);
 
-        var objectKey = TradeSinkS3DailyObjectKey.Build(_options.Prefix, exchange.ToString(), instrument.ToString(), utcDate);
+        var finalizedFileName = Path.GetFileName(finalizedFilePath);
+        var objectKey = TradeSinkS3DailyObjectKey.BuildForFileName(_options.Prefix, exchange.ToString(), instrument.ToString(), finalizedFileName);
         _log.Info($"Trade S3 upload start: bucket={_options.BucketName}, objectKey={objectKey}, path={finalizedFilePath}.");
 
         try

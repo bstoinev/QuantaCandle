@@ -4,6 +4,7 @@ using LogMachina;
 
 using QuantaCandle.Core;
 using QuantaCandle.Core.Trading;
+using QuantaCandle.Infra.Storage;
 
 namespace QuantaCandle.Infra.Pipeline;
 
@@ -16,6 +17,9 @@ public sealed class TradeScratchCheckpointLifecycle(
     ITradeFinalizedFileDispatcher tradeFinalizedFileDispatcher,
     ITradeSnapshotFileDispatcher tradeSnapshotFileDispatcher,
     IIngestionStateStore ingestionStateStore,
+    ITradeGapScanner? tradeGapScanner,
+    ITradeGapHealer? tradeGapHealer,
+    ITradeDayBoundaryResolver? tradeDayBoundaryResolver,
     ILogMachina<TradeScratchCheckpointLifecycle> log) : ITradeCheckpointLifecycle
 {
     private readonly Lock _gate = new();
@@ -304,6 +308,7 @@ public sealed class TradeScratchCheckpointLifecycle(
         cancellationToken.ThrowIfCancellationRequested();
 
         var finalizedPath = TradeLocalDailyFilePath.Build(localRootDirectory, exchange, instrument, utcDate);
+        var partialFinalizedPath = TradeLocalDailyFilePath.BuildPartial(localRootDirectory, exchange, instrument, utcDate);
         var finalizedDirectory = Path.GetDirectoryName(finalizedPath);
 
         if (!string.IsNullOrWhiteSpace(finalizedDirectory))
@@ -311,15 +316,15 @@ public sealed class TradeScratchCheckpointLifecycle(
             Directory.CreateDirectory(finalizedDirectory);
         }
 
-        if (File.Exists(finalizedPath))
+        if (File.Exists(finalizedPath) || File.Exists(partialFinalizedPath))
         {
-            throw new InvalidOperationException($"The finalized day file already exists: {finalizedPath}.");
+            throw new InvalidOperationException($"The finalized day file already exists for UTC day {utcDate:yyyy-MM-dd}: {finalizedPath} or {partialFinalizedPath}.");
         }
 
         log.Info($"Trade scratch checkpoint finalize: exchange={exchange}, instrument={instrument}, utcDate={utcDate:yyyy-MM-dd}, from={scratchPath}, to={finalizedPath}.");
         File.Move(scratchPath, finalizedPath);
 
-        var result = finalizedPath;
+        var result = await TryHealRolloverFinalizedDayAsync(exchange, instrument, utcDate, finalizedPath, cancellationToken).ConfigureAwait(false);
         return result;
     }
 
@@ -368,6 +373,254 @@ public sealed class TradeScratchCheckpointLifecycle(
     private static bool TryGetTradeId(string tradeIdText, out long tradeId)
     {
         var result = long.TryParse(tradeIdText, NumberStyles.None, CultureInfo.InvariantCulture, out tradeId);
+        return result;
+    }
+
+    /// <summary>
+    /// Runs one deterministic rollover healing pass for the finalized UTC day and downgrades the file name to partial when gaps remain.
+    /// </summary>
+    private async Task<string> TryHealRolloverFinalizedDayAsync(
+        ExchangeId exchange,
+        Instrument instrument,
+        DateOnly utcDate,
+        string finalizedPath,
+        CancellationToken cancellationToken)
+    {
+        var result = finalizedPath;
+
+        if (tradeGapScanner is null || tradeGapHealer is null)
+        {
+            return result;
+        }
+
+        try
+        {
+            var repairPlans = await BuildRolloverRepairPlansAsync(exchange, instrument, utcDate, finalizedPath, cancellationToken).ConfigureAwait(false);
+            if (repairPlans.Count > 0)
+            {
+                log.Info($"Trade rollover healing start: exchange={exchange}, instrument={instrument}, utcDate={utcDate:yyyy-MM-dd}, repairPlanCount={repairPlans.Count}, path={finalizedPath}.");
+
+                foreach (var repairPlan in repairPlans)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await HealPlannedGapAsync(exchange, instrument, finalizedPath, repairPlan, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            var remainingRepairPlans = await BuildRolloverRepairPlansAsync(exchange, instrument, utcDate, finalizedPath, cancellationToken).ConfigureAwait(false);
+            if (remainingRepairPlans.Count > 0)
+            {
+                var partialFinalizedPath = TradeLocalDailyFilePath.BuildPartial(localRootDirectory, exchange, instrument, utcDate);
+                var remainingGapText = string.Join(", ", remainingRepairPlans.Select(static plan => $"{plan.Gap.MissingTradeIds?.FirstTradeId}-{plan.Gap.MissingTradeIds?.LastTradeId}"));
+
+                log.Warn($"Trade rollover healing incomplete: exchange={exchange}, instrument={instrument}, utcDate={utcDate:yyyy-MM-dd}, remainingGapCount={remainingRepairPlans.Count}, remainingGaps=[{remainingGapText}], finalPath={partialFinalizedPath}.");
+                File.Move(finalizedPath, partialFinalizedPath);
+                result = partialFinalizedPath;
+            }
+        }
+        catch (Exception ex)
+        {
+            var partialFinalizedPath = TradeLocalDailyFilePath.BuildPartial(localRootDirectory, exchange, instrument, utcDate);
+
+            log.Warn($"Trade rollover healing failed: exchange={exchange}, instrument={instrument}, utcDate={utcDate:yyyy-MM-dd}. Finalizing partial day file.");
+            log.Error(ex);
+
+            if (File.Exists(finalizedPath) && !File.Exists(partialFinalizedPath))
+            {
+                File.Move(finalizedPath, partialFinalizedPath);
+            }
+
+            result = File.Exists(partialFinalizedPath)
+                ? partialFinalizedPath
+                : finalizedPath;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Builds the one-pass rollover repair plan by combining interior local gaps with BestEffort UTC day boundary gaps.
+    /// </summary>
+    private async Task<IReadOnlyList<TradeGapRepairPlan>> BuildRolloverRepairPlansAsync(
+        ExchangeId exchange,
+        Instrument instrument,
+        DateOnly utcDate,
+        string finalizedPath,
+        CancellationToken cancellationToken)
+    {
+        var candidateFile = CreateCandidateFile(finalizedPath, utcDate);
+        var scanRequest = new TradeGapScanRequest(localRootDirectory, [candidateFile], []);
+        var scanResult = await tradeGapScanner!
+            .Scan(scanRequest, cancellationToken)
+            .ConfigureAwait(false);
+        var result = CreateRepairPlans(scanResult);
+
+        var boundaryTradePair = await TryReadBoundaryTradePairAsync(finalizedPath, cancellationToken).ConfigureAwait(false);
+        if (boundaryTradePair is not null && tradeDayBoundaryResolver is not null)
+        {
+            try
+            {
+                var boundary = await tradeDayBoundaryResolver
+                    .Resolve(
+                        exchange,
+                        instrument,
+                        utcDate,
+                        TradeDayBoundaryResolutionMode.BestEffort,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (!string.IsNullOrWhiteSpace(boundary.Warning))
+                {
+                    log.Warn($"Trade rollover boundary verification inconsistency: exchange={exchange}, instrument={instrument}, utcDate={utcDate:yyyy-MM-dd}. {boundary.Warning}");
+                }
+
+                var startBoundaryGap = TradeDayBoundaryGapPlanner.CreateStartBoundaryGap(
+                    boundary,
+                    boundaryTradePair.Value.FirstTradeId,
+                    boundaryTradePair.Value.FirstNumericTradeId,
+                    boundaryTradePair.Value.FirstTimestamp,
+                    candidateFile.Path,
+                    boundaryTradePair.Value.FirstLineNumber,
+                    boundaryTradePair.Value.FirstTimestamp);
+                if (startBoundaryGap is not null)
+                {
+                    result.Add(new TradeGapRepairPlan(startBoundaryGap.Value.Gap, startBoundaryGap.Value.AffectedRange));
+                }
+
+                var endBoundaryGap = TradeDayBoundaryGapPlanner.CreateEndBoundaryGap(
+                    boundary,
+                    boundaryTradePair.Value.LastTradeId,
+                    boundaryTradePair.Value.LastNumericTradeId,
+                    boundaryTradePair.Value.LastTimestamp,
+                    candidateFile.Path,
+                    boundaryTradePair.Value.LastLineNumber,
+                    boundaryTradePair.Value.LastTimestamp);
+                if (endBoundaryGap is not null)
+                {
+                    result.Add(new TradeGapRepairPlan(endBoundaryGap.Value.Gap, endBoundaryGap.Value.AffectedRange));
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"Trade rollover boundary resolution failed: exchange={exchange}, instrument={instrument}, utcDate={utcDate:yyyy-MM-dd}. Continuing without boundary repair planning.");
+                log.Error(ex);
+            }
+        }
+
+        result = result
+            .OrderBy(static plan => plan.Gap.MissingTradeIds?.FirstTradeId ?? long.MaxValue)
+            .ThenBy(static plan => plan.Gap.MissingTradeIds?.LastTradeId ?? long.MaxValue)
+            .ToList();
+        return result;
+    }
+
+    /// <summary>
+    /// Heals one planned rollover gap using the existing local fetch and splice flow.
+    /// </summary>
+    private async Task HealPlannedGapAsync(
+        ExchangeId exchange,
+        Instrument instrument,
+        string finalizedPath,
+        TradeGapRepairPlan repairPlan,
+        CancellationToken cancellationToken)
+    {
+        if (repairPlan.Gap.MissingTradeIds is null)
+        {
+            return;
+        }
+
+        var missingTradeIds = repairPlan.Gap.MissingTradeIds.Value;
+        var candidateFile = CreateCandidateFile(finalizedPath, DateOnly.FromDateTime(repairPlan.Gap.FromExclusive.Timestamp.UtcDateTime));
+
+        try
+        {
+            var request = new TradeGapHealRequest(
+                localRootDirectory,
+                exchange,
+                instrument,
+                missingTradeIds.FirstTradeId,
+                missingTradeIds.LastTradeId,
+                [candidateFile],
+                repairPlan.AffectedRange,
+                [missingTradeIds]);
+            var healResult = await tradeGapHealer!
+                .Heal(request, cancellationToken)
+                .ConfigureAwait(false);
+
+            log.Info($"Trade rollover healing attempt completed: exchange={exchange}, instrument={instrument}, path={finalizedPath}, requestedRange={missingTradeIds.FirstTradeId}-{missingTradeIds.LastTradeId}, outcome={healResult.Outcome}, fullCoverage={healResult.HasFullRequestedCoverage}.");
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"Trade rollover healing attempt failed: exchange={exchange}, instrument={instrument}, path={finalizedPath}, requestedRange={missingTradeIds.FirstTradeId}-{missingTradeIds.LastTradeId}.");
+            log.Error(ex);
+        }
+    }
+
+    /// <summary>
+    /// Reads the local first and last trade identifiers for the finalized UTC day file.
+    /// </summary>
+    private static async Task<BoundaryTradePair?> TryReadBoundaryTradePairAsync(string finalizedPath, CancellationToken cancellationToken)
+    {
+        BoundaryTrade? firstTrade = null;
+        BoundaryTrade? lastTrade = null;
+        var lineNumber = 0;
+
+        await foreach (var line in File.ReadLinesAsync(finalizedPath, cancellationToken).ConfigureAwait(false))
+        {
+            lineNumber++;
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            var trade = LocalTradeJsonLineParser.ParseTrade(line, finalizedPath, lineNumber);
+            var hasTradeId = TryGetTradeId(trade.Key.TradeId, out var numericTradeId);
+            if (!hasTradeId)
+            {
+                throw new InvalidOperationException($"TradeId '{trade.Key.TradeId}' in '{finalizedPath}' must be numeric for rollover healing.");
+            }
+
+            var boundaryTrade = new BoundaryTrade(
+                trade.Key.TradeId,
+                numericTradeId,
+                trade.Timestamp.ToUniversalTime(),
+                lineNumber);
+            if (firstTrade is null)
+            {
+                firstTrade = boundaryTrade;
+            }
+
+            lastTrade = boundaryTrade;
+        }
+
+        BoundaryTradePair? result = firstTrade is not null && lastTrade is not null
+            ? new BoundaryTradePair(firstTrade.Value, lastTrade.Value)
+            : null;
+        return result;
+    }
+
+    /// <summary>
+    /// Converts a scan result into gap repair plans aligned by gap index and affected range index.
+    /// </summary>
+    private static List<TradeGapRepairPlan> CreateRepairPlans(TradeGapScanResult scanResult)
+    {
+        var result = new List<TradeGapRepairPlan>(scanResult.DetectedGaps.Count);
+
+        for (var i = 0; i < scanResult.DetectedGaps.Count; i++)
+        {
+            var affectedRange = i < scanResult.AffectedRanges.Count
+                ? scanResult.AffectedRanges[i]
+                : null;
+            result.Add(new TradeGapRepairPlan(scanResult.DetectedGaps[i], affectedRange));
+        }
+
+        return result;
+    }
+
+    private TradeGapAffectedFile CreateCandidateFile(string finalizedPath, DateOnly utcDate)
+    {
+        var relativePath = Path.GetRelativePath(localRootDirectory, finalizedPath);
+        var result = new TradeGapAffectedFile(relativePath, utcDate);
         return result;
     }
 
@@ -430,5 +683,42 @@ public sealed class TradeScratchCheckpointLifecycle(
         public Instrument Instrument { get; } = instrument;
 
         public string ScratchPath { get; } = scratchPath;
+    }
+
+    /// <summary>
+    /// Describes one local first or last trade used during rollover boundary planning.
+    /// </summary>
+    private readonly record struct BoundaryTrade(string TradeId, long NumericTradeId, DateTimeOffset Timestamp, int LineNumber);
+
+    /// <summary>
+    /// Describes the local first and last trade ids for one finalized UTC day file.
+    /// </summary>
+    private readonly record struct BoundaryTradePair(BoundaryTrade First, BoundaryTrade Last)
+    {
+        public string FirstTradeId => First.TradeId;
+
+        public long FirstNumericTradeId => First.NumericTradeId;
+
+        public DateTimeOffset FirstTimestamp => First.Timestamp;
+
+        public int FirstLineNumber => First.LineNumber;
+
+        public string LastTradeId => Last.TradeId;
+
+        public long LastNumericTradeId => Last.NumericTradeId;
+
+        public DateTimeOffset LastTimestamp => Last.Timestamp;
+
+        public int LastLineNumber => Last.LineNumber;
+    }
+
+    /// <summary>
+    /// Describes one bounded rollover repair request.
+    /// </summary>
+    private sealed class TradeGapRepairPlan(TradeGap gap, TradeGapAffectedRange? affectedRange)
+    {
+        public TradeGapAffectedRange? AffectedRange { get; } = affectedRange;
+
+        public TradeGap Gap { get; } = gap;
     }
 }
