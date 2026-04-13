@@ -10,12 +10,34 @@ namespace QuantaCandle.Infra.Storage;
 /// <summary>
 /// Heals one local JSONL trade file by splicing exact fetched gap ranges into the local stream.
 /// </summary>
-public sealed class LocalFileTradeGapHealer(
-    ITradeGapFetchClient tradeGapFetchClient,
-    ILogMachina<LocalFileTradeGapHealer> log) : ITradeGapHealer
+public sealed class LocalFileTradeGapHealer : ITradeGapHealer
 {
-    private readonly ITradeGapFetchClient _tradeGapFetchClient = tradeGapFetchClient ?? throw new ArgumentNullException(nameof(tradeGapFetchClient));
-    private readonly ILogMachina<LocalFileTradeGapHealer> _log = log ?? throw new ArgumentNullException(nameof(log));
+    private readonly ITradeGapFetchClient _tradeGapFetchClient;
+    private readonly ILogMachina<LocalFileTradeGapHealer> _log;
+    private readonly IStagingObserver? _stagingObserver;
+
+    /// <summary>
+    /// Initializes the healer with the fetch client and logger used for one-file streaming splice operations.
+    /// </summary>
+    public LocalFileTradeGapHealer(
+        ITradeGapFetchClient tradeGapFetchClient,
+        ILogMachina<LocalFileTradeGapHealer> log)
+        : this(tradeGapFetchClient, log, null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes the healer with an optional observer for staged output checkpoints.
+    /// </summary>
+    internal LocalFileTradeGapHealer(
+        ITradeGapFetchClient tradeGapFetchClient,
+        ILogMachina<LocalFileTradeGapHealer> log,
+        IStagingObserver? stagingObserver)
+    {
+        _tradeGapFetchClient = tradeGapFetchClient ?? throw new ArgumentNullException(nameof(tradeGapFetchClient));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
+        _stagingObserver = stagingObserver;
+    }
 
     /// <summary>
     /// Fetches exact missing trades for one local file and rewrites that file safely with a forward-only sequential splice.
@@ -33,7 +55,7 @@ public sealed class LocalFileTradeGapHealer(
             var existingFile = EnsureSingleResolvedFile(existingFiles, request);
             _log.Info($"Resolved local trade file '{existingFile.RelativePath}' for {request.Exchange}:{request.Symbol}.");
 
-            await using var splicer = new StreamingTradeGapSplicer(request, existingFile, cancellationToken);
+            await using var splicer = new StreamingTradeGapSplicer(request, existingFile, _stagingObserver, cancellationToken);
             foreach (var missingRange in request.RequestedMissingTradeRanges)
             {
                 _log.Info($"Fetching exact missing range {missingRange.FirstTradeId}-{missingRange.LastTradeId} for file '{existingFile.RelativePath}'.");
@@ -452,12 +474,16 @@ public sealed class LocalFileTradeGapHealer(
         /// <summary>
         /// Initializes the streaming splicer for one resolved file and one sequence of exact missing ranges.
         /// </summary>
-        public StreamingTradeGapSplicer(TradeGapHealRequest request, ResolvedFile resolvedFile, CancellationToken cancellationToken)
+        public StreamingTradeGapSplicer(
+            TradeGapHealRequest request,
+            ResolvedFile resolvedFile,
+            IStagingObserver? stagingObserver,
+            CancellationToken cancellationToken)
         {
             _request = request ?? throw new ArgumentNullException(nameof(request));
             _resolvedFile = resolvedFile ?? throw new ArgumentNullException(nameof(resolvedFile));
             _cancellationToken = cancellationToken;
-            _outputWriter = new SpliceOutputWriter(request, _resolvedFile);
+            _outputWriter = new SpliceOutputWriter(request, _resolvedFile, stagingObserver);
             FetchedRanges = new List<MissingTradeIdRange>();
         }
 
@@ -510,6 +536,7 @@ public sealed class LocalFileTradeGapHealer(
             }
 
             _currentMissingRange = null;
+            await _outputWriter.Flush(StagingCheckpointKind.MissingRange, _cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -556,6 +583,8 @@ public sealed class LocalFileTradeGapHealer(
                 await _outputWriter.WriteTrade(normalizedTrade, cancellationToken).ConfigureAwait(false);
                 _insertedTradeCount++;
             }
+
+            await _outputWriter.Flush(StagingCheckpointKind.Page, cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -706,18 +735,37 @@ public sealed class LocalFileTradeGapHealer(
     /// <summary>
     /// Streams spliced JSONL output into one staged temp file for atomic replacement.
     /// </summary>
-    private sealed class SpliceOutputWriter(TradeGapHealRequest request, LocalFileTradeGapHealer.ResolvedFile resolvedFile) : IAsyncDisposable
+    private sealed class SpliceOutputWriter(
+        TradeGapHealRequest request,
+        ResolvedFile resolvedFile,
+        IStagingObserver? stagingObserver) : IAsyncDisposable
     {
         private readonly TradeGapHealRequest _request = request ?? throw new ArgumentNullException(nameof(request));
         private readonly ResolvedFile _resolvedFile = resolvedFile ?? throw new ArgumentNullException(nameof(resolvedFile));
+        private readonly IStagingObserver? _stagingObserver = stagingObserver;
         private StagedFile? _stagedFile;
         private StreamWriter? _writer;
+
+        /// <summary>
+        /// Flushes the current staged output so external readers can observe durable progress before commit.
+        /// </summary>
+        public async Task Flush(StagingCheckpointKind checkpointKind, CancellationToken cancellationToken)
+        {
+            if (_writer is not null)
+            {
+                await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                if (_stagedFile is not null && _stagingObserver is not null)
+                {
+                    await _stagingObserver.OnCheckpoint(_stagedFile.TempPath, checkpointKind, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
 
         public async Task<TradeGapAffectedFile> Commit()
         {
             if (_writer is not null)
             {
-                await _writer.FlushAsync().ConfigureAwait(false);
+                await Flush(StagingCheckpointKind.Commit, CancellationToken.None).ConfigureAwait(false);
                 await _writer.DisposeAsync().ConfigureAwait(false);
                 _writer = null;
             }
@@ -768,7 +816,7 @@ public sealed class LocalFileTradeGapHealer(
 
             var tempPath = fullPath + ".healing." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".tmp";
             var backupPath = fullPath + ".healing." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".bak";
-            var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.Read);
             _writer = new StreamWriter(stream);
             _stagedFile = new StagedFile(_resolvedFile.RelativePath, fullPath, _resolvedFile.TradingDay, tempPath, backupPath);
             return Task.FromResult(_writer);

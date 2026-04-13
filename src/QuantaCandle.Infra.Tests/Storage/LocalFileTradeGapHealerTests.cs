@@ -211,6 +211,110 @@ public sealed class LocalFileTradeGapHealerTests
     }
 
     [Fact]
+    public async Task FlushesStagingFileAfterEachFetchedPageBeforeCommit()
+    {
+        var rootDirectory = CreateRootDirectory();
+        try
+        {
+            var checkpointKinds = new List<StagingCheckpointKind>();
+            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(104)]);
+
+            var observer = new Mock<IStagingObserver>(MockBehavior.Strict);
+            observer
+                .Setup(mock => mock.OnCheckpoint(It.IsAny<string>(), It.IsAny<StagingCheckpointKind>(), It.IsAny<CancellationToken>()))
+                .Returns<string, StagingCheckpointKind, CancellationToken>(async (tempPath, checkpointKind, cancellationToken) =>
+                {
+                    checkpointKinds.Add(checkpointKind);
+                    if (checkpointKind == StagingCheckpointKind.Page && checkpointKinds.Count(kind => kind == StagingCheckpointKind.Page) == 1)
+                    {
+                        var stagedTrades = await ReadTradesFromFullPathAsync(tempPath);
+                        var originalTrades = await ReadTradesAsync(rootDirectory, relativePath);
+                        Assert.Equal(["100", "101", "102"], stagedTrades.Select(static trade => trade.Key.TradeId).ToArray());
+                        Assert.Equal(["100", "104"], originalTrades.Select(static trade => trade.Key.TradeId).ToArray());
+                    }
+                });
+
+            var healer = new LocalFileTradeGapHealer(
+                new PagedRecordingTradeGapFetchClient([
+                    [CreateTrade(101), CreateTrade(102)],
+                    [CreateTrade(103)],
+                ]),
+                CreateLog(),
+                observer.Object);
+            var result = await healer.Heal(CreateRequest(rootDirectory, 101, 103, relativePath), CancellationToken.None);
+
+            Assert.Equal(TradeGapHealStatus.Full, result.Outcome);
+            Assert.Contains(StagingCheckpointKind.Page, checkpointKinds);
+            Assert.Contains(StagingCheckpointKind.Commit, checkpointKinds);
+            Assert.True(
+                checkpointKinds.IndexOf(StagingCheckpointKind.Page)
+                < checkpointKinds.IndexOf(StagingCheckpointKind.Commit));
+
+            var trades = await ReadTradesAsync(rootDirectory, relativePath);
+            Assert.Equal(["100", "101", "102", "103", "104"], trades.Select(static trade => trade.Key.TradeId).ToArray());
+        }
+        finally
+        {
+            DeleteRootDirectory(rootDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task FlushesStagingFileWhenMissingRangeCompletesBeforeNextRangeStarts()
+    {
+        var rootDirectory = CreateRootDirectory();
+        try
+        {
+            var checkpointKinds = new List<StagingCheckpointKind>();
+            var relativePath = Path.Combine("BTC-USDT", "2026-03-28.jsonl");
+            await WriteTradesAsync(rootDirectory, relativePath, [CreateTrade(100), CreateTrade(102), CreateTrade(104)]);
+
+            var observer = new Mock<IStagingObserver>(MockBehavior.Strict);
+            observer
+                .Setup(mock => mock.OnCheckpoint(It.IsAny<string>(), It.IsAny<StagingCheckpointKind>(), It.IsAny<CancellationToken>()))
+                .Returns<string, StagingCheckpointKind, CancellationToken>(async (tempPath, checkpointKind, cancellationToken) =>
+                {
+                    checkpointKinds.Add(checkpointKind);
+                    if (checkpointKind == StagingCheckpointKind.MissingRange && checkpointKinds.Count(kind => kind == StagingCheckpointKind.MissingRange) == 1)
+                    {
+                        var stagedTrades = await ReadTradesFromFullPathAsync(tempPath);
+                        var originalTrades = await ReadTradesAsync(rootDirectory, relativePath);
+                        Assert.Equal(["100", "101"], stagedTrades.Select(static trade => trade.Key.TradeId).ToArray());
+                        Assert.Equal(["100", "102", "104"], originalTrades.Select(static trade => trade.Key.TradeId).ToArray());
+                    }
+                });
+
+            var healer = new LocalFileTradeGapHealer(
+                new RecordingTradeGapFetchClient([CreateTrade(101), CreateTrade(103)]),
+                CreateLog(),
+                observer.Object);
+            var result = await healer.Heal(
+                CreateRequest(
+                    rootDirectory,
+                    101,
+                    103,
+                    relativePath,
+                    [new MissingTradeIdRange(101, 101), new MissingTradeIdRange(103, 103)]),
+                CancellationToken.None);
+
+            Assert.Equal(TradeGapHealStatus.Full, result.Outcome);
+            Assert.Contains(StagingCheckpointKind.MissingRange, checkpointKinds);
+            Assert.Contains(StagingCheckpointKind.Commit, checkpointKinds);
+            Assert.True(
+                checkpointKinds.IndexOf(StagingCheckpointKind.MissingRange)
+                < checkpointKinds.IndexOf(StagingCheckpointKind.Commit));
+
+            var trades = await ReadTradesAsync(rootDirectory, relativePath);
+            Assert.Equal(["100", "101", "102", "103", "104"], trades.Select(static trade => trade.Key.TradeId).ToArray());
+        }
+        finally
+        {
+            DeleteRootDirectory(rootDirectory);
+        }
+    }
+
+    [Fact]
     public async Task FetchedBatchInternalGapProducesWarningWithoutFailingHeal()
     {
         var rootDirectory = CreateRootDirectory();
@@ -381,6 +485,32 @@ public sealed class LocalFileTradeGapHealerTests
         return await TradeJsonlFile.ReadTrades(Path.Combine(rootDirectory, relativePath), CancellationToken.None);
     }
 
+    private static async Task<IReadOnlyList<TradeInfo>> ReadTradesFromFullPathAsync(string fullPath)
+    {
+        var result = new List<TradeInfo>();
+
+        await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+
+        while (true)
+        {
+            var line = await reader.ReadLineAsync(CancellationToken.None);
+            if (line is null)
+            {
+                break;
+            }
+
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            result.Add(ParseTrade(line));
+        }
+
+        return result;
+    }
+
     private static async Task WriteTradesAsync(string rootDirectory, string relativePath, IReadOnlyList<TradeInfo> trades)
     {
         await TradeJsonlFile.WriteFullPayload(Path.Combine(rootDirectory, relativePath), TradeJsonlFile.BuildPayload(trades), CancellationToken.None);
@@ -404,6 +534,20 @@ public sealed class LocalFileTradeGapHealerTests
     private static ILogMachina<LocalFileTradeGapHealer> CreateLog()
     {
         return new Mock<ILogMachina<LocalFileTradeGapHealer>>().Object;
+    }
+
+    private static TradeInfo ParseTrade(string line)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(line);
+        var root = document.RootElement;
+        var exchange = new ExchangeId(root.GetProperty("exchange").GetString() ?? string.Empty);
+        var instrument = Instrument.Parse(root.GetProperty("instrument").GetString() ?? string.Empty);
+        var tradeId = root.GetProperty("tradeId").GetString() ?? string.Empty;
+        var timestamp = root.GetProperty("timestamp").GetDateTimeOffset();
+        var price = root.GetProperty("price").GetDecimal();
+        var quantity = root.GetProperty("quantity").GetDecimal();
+
+        return new TradeInfo(new TradeKey(exchange, instrument, tradeId), timestamp, price, quantity);
     }
 
     private static string FindProjectFile(string projectDirectoryName, string relativePath)
@@ -457,6 +601,40 @@ public sealed class LocalFileTradeGapHealerTests
                 })
                 .ToArray();
             await pageSink.AcceptPage(pageTrades, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Returns predefined pages for one requested range to exercise page-level staging flushes.
+    /// </summary>
+    private sealed class PagedRecordingTradeGapFetchClient(IReadOnlyList<IReadOnlyList<TradeInfo>> pages) : ITradeGapFetchClient
+    {
+        private readonly IReadOnlyList<IReadOnlyList<TradeInfo>> _pages = pages ?? throw new ArgumentNullException(nameof(pages));
+        public List<(long Start, long End)> RequestedRanges { get; } = [];
+
+        /// <summary>
+        /// Streams the configured pages in order without changing the requested fetch boundaries.
+        /// </summary>
+        public async ValueTask Fetch(
+            Instrument instrument,
+            long missingTradeIdStart,
+            long missingTradeIdEnd,
+            ITradeGapFetchedPageSink pageSink,
+            ITradeGapProgressReporter? progressReporter,
+            CancellationToken cancellationToken)
+        {
+            RequestedRanges.Add((missingTradeIdStart, missingTradeIdEnd));
+            foreach (var page in _pages)
+            {
+                var pageTrades = page
+                    .Where(trade =>
+                    {
+                        var tradeId = long.Parse(trade.Key.TradeId);
+                        return tradeId >= missingTradeIdStart && tradeId <= missingTradeIdEnd;
+                    })
+                    .ToArray();
+                await pageSink.AcceptPage(pageTrades, cancellationToken);
+            }
         }
     }
 }
