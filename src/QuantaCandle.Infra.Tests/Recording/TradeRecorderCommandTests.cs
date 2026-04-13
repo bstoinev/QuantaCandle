@@ -89,7 +89,7 @@ public sealed class TradeRecorderCommandTests
             "--flushInterval", "2s",
             "--checkpointInterval", "30m",
             "--cacheSize", "4096",
-            "--outDir", "trades-out",
+            "--outDir", "trade-data",
         ]);
 
         Assert.Equal(TimeSpan.FromSeconds(30), options.Duration);
@@ -116,7 +116,7 @@ public sealed class TradeRecorderCommandTests
         ]);
 
         Assert.NotNull(options.SinkRegistration.FileOptions);
-        Assert.Equal("trades-out", options.SinkRegistration.FileOptions.OutputDirectory);
+        Assert.Equal("trade-data", options.SinkRegistration.FileOptions.OutputDirectory);
         Assert.Null(options.SinkRegistration.S3Options);
     }
 
@@ -221,5 +221,7 @@ public sealed class TradeRecorderCommandTests
         Assert.Contains("BTCUSDT --exchange Binance|-x Binance", help, StringComparison.Ordinal);
         Assert.Contains("[--sink file|s3|null|-to file|s3|null]", help, StringComparison.Ordinal);
         Assert.Contains("Omit --duration to keep recording until the host or process is stopped.", help, StringComparison.Ordinal);
+        Assert.Contains("[--outDir trade-data]", help, StringComparison.Ordinal);
+        Assert.Contains("<working-dir>\\trade-data\\<exchange>\\<instrument>\\yyyy-MM-dd.jsonl", help, StringComparison.Ordinal);
     }
 }

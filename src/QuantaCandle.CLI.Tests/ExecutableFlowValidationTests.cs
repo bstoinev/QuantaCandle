@@ -23,7 +23,7 @@ public sealed class ExecutableFlowValidationTests
     public async Task CollectThenGenerateCreatesCandleFilesWithoutNetworkDependency()
     {
         var root = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
-        var tradeDirectory = Path.Combine(root, "trades-out");
+        var tradeDirectory = Path.Combine(root, "trade-data");
 
         Directory.CreateDirectory(tradeDirectory);
 
@@ -41,7 +41,7 @@ public sealed class ExecutableFlowValidationTests
 
             Assert.True(result.InputTradeCount > 0);
 
-            var candleInstrumentDirectory = Path.Combine(root, "candles-out", "binance", "1m", "BTC-USDT");
+            var candleInstrumentDirectory = Path.Combine(root, "candle-data", "binance", "BTC-USDT");
             var candleFiles = Directory.GetFiles(candleInstrumentDirectory, "*.csv", SearchOption.AllDirectories);
             Assert.NotEmpty(candleFiles);
 

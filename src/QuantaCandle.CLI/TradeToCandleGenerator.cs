@@ -11,7 +11,10 @@ public sealed class TradeToCandleGenerator
     /// <summary>
     /// Generates candles for the requested exchange, instrument, and optional date scope.
     /// </summary>
-    public static async Task<CliResult> Run(CliOptions options, CancellationToken cancellationToken)
+    public static async Task<CliResult> Run(
+        CliOptions options,
+        Func<string, int, int, bool, CancellationToken, ValueTask>? fileProgressReporter,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -22,6 +25,7 @@ public sealed class TradeToCandleGenerator
         var workDirectory = Path.GetFullPath(options.WorkDirectory);
         var tradeRootDirectory = GetTradeRootDirectory(workDirectory);
         var outputRootDirectory = GetOutputRootDirectory(workDirectory, exchange, timeframe);
+        EnsureTradeInputDirectoryExists(tradeRootDirectory, exchange, instrument);
         var inputFiles = ResolveInputFiles(tradeRootDirectory, exchange, instrument, options.Dates);
 
         if (PathsEqual(tradeRootDirectory, outputRootDirectory))
@@ -29,7 +33,7 @@ public sealed class TradeToCandleGenerator
             throw new ArgumentException("Input and output directories must be different.");
         }
 
-        var trades = await LoadTradesAsync(inputFiles, exchange, instrument, cancellationToken).ConfigureAwait(false);
+        var trades = await LoadTradesAsync(inputFiles, exchange, instrument, fileProgressReporter, cancellationToken).ConfigureAwait(false);
         trades.Sort(TradeRowComparer.Instance);
 
         var inputTradeCount = trades.Count;
@@ -78,6 +82,11 @@ public sealed class TradeToCandleGenerator
             OutputFileCount: outputPaths.Length);
         return result;
     }
+
+    /// <summary>
+    /// Generates candles without progress callbacks.
+    /// </summary>
+    public static Task<CliResult> Run(CliOptions options, CancellationToken cancellationToken) => Run(options, null, cancellationToken);
 
     private static string[] BuildJsonlLines(IReadOnlyList<CandleRow> candles)
     {
@@ -165,14 +174,25 @@ public sealed class TradeToCandleGenerator
 
     private static string GetOutputRootDirectory(string workDirectory, string exchange, string timeframe)
     {
-        var result = Path.GetFullPath(Path.Combine(workDirectory, "candles-out", exchange, timeframe));
+        var result = Path.Combine(CliPathRootResolver.GetCandleDataRoot(workDirectory), exchange);
         return result;
     }
 
     private static string GetTradeRootDirectory(string workDirectory)
     {
-        var result = Path.GetFullPath(Path.Combine(workDirectory, "trades-out"));
+        var result = CliPathRootResolver.GetTradeDataRoot(workDirectory);
         return result;
+    }
+
+    private static void EnsureTradeInputDirectoryExists(string tradeRootDirectory, string exchange, string instrument)
+    {
+        var expectedDirectory = Path.Combine(tradeRootDirectory, exchange, instrument);
+        if (!Directory.Exists(expectedDirectory))
+        {
+            var expectedPathExample = Path.Combine(expectedDirectory, "2026-03-28.jsonl");
+            throw new ArgumentException(
+                $"Expected trade input structure '<workDir>\\trade-data\\<exchange>\\<instrument>\\yyyy-MM-dd.jsonl'. Missing directory '{expectedDirectory}'. Example path: '{expectedPathExample}'.");
+        }
     }
 
     private static string NormalizeInstrument(string instrument)
@@ -239,13 +259,20 @@ public sealed class TradeToCandleGenerator
         IReadOnlyList<string> files,
         string exchange,
         string instrument,
+        Func<string, int, int, bool, CancellationToken, ValueTask>? fileProgressReporter,
         CancellationToken cancellationToken)
     {
         var result = new List<TradeRow>();
 
-        foreach (var file in files)
+        for (var fileIndex = 0; fileIndex < files.Count; fileIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var file = files[fileIndex];
+
+            if (fileProgressReporter is not null)
+            {
+                await fileProgressReporter(file, fileIndex, files.Count, false, cancellationToken).ConfigureAwait(false);
+            }
 
             var lineNumber = 0;
             await foreach (var line in File.ReadLinesAsync(file, cancellationToken).ConfigureAwait(false))
@@ -265,6 +292,11 @@ public sealed class TradeToCandleGenerator
                 }
 
                 result.Add(row);
+            }
+
+            if (fileProgressReporter is not null)
+            {
+                await fileProgressReporter(file, fileIndex + 1, files.Count, true, cancellationToken).ConfigureAwait(false);
             }
         }
 

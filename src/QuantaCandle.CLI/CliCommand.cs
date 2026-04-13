@@ -56,8 +56,8 @@ public static class CliCommand
         writer.WriteLine("  - <instrument> must use BASE-QUOTE format, for example BTC-USDT.");
         writer.WriteLine("  - --workDir defaults to the current directory.");
         writer.WriteLine("  - --exchange defaults to Binance.");
-        writer.WriteLine("  - Trade inputs are read from <workDir>\\<exchange>\\<INSTRUMENT>\\yyyy-MM-dd.jsonl.");
-        writer.WriteLine("  - Candle outputs are written to <workDir>\\candles-out\\<exchange>\\1m\\<INSTRUMENT>\\yyyy-MM-dd.csv.");
+        writer.WriteLine("  - Trade inputs are read from <workDir>\\trade-data\\<exchange>\\<INSTRUMENT>\\yyyy-MM-dd.jsonl.");
+        writer.WriteLine("  - Candle outputs are written to <workDir>\\candle-data\\<exchange>\\<INSTRUMENT>\\yyyy-MM-dd.csv.");
         writer.WriteLine("  - --dates and -on accept one date or a comma-separated list using yyyy-MM-dd or yyyyMMdd.");
         writer.WriteLine("  - scan reports gaps without modifying files.");
         writer.WriteLine("  - heal scans the requested instrument scope and heals each bounded gap it finds.");

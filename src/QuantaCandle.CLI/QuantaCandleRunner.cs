@@ -8,6 +8,8 @@ internal class QuantaCandleRunner(
     ITradeGapHealer gapHealer,
     ITradeGapScanAugmenter tradeGapScanAugmenter) : IQuantaCandleRunner
 {
+    private const int CandlizeFileProgressBarWidth = 24;
+
     private enum ScanGapKind
     {
         Interior = 1,
@@ -68,7 +70,24 @@ internal class QuantaCandleRunner(
             "1m",
             runOptions.Dates,
             "csv");
-        var generationResult = await TradeToCandleGenerator.Run(generatorOptions, cancellationToken).ConfigureAwait(false);
+        var tradeRootDirectory = CliPathRootResolver.GetTradeDataRoot(runOptions.WorkDirectory);
+        var generationResult = await TradeToCandleGenerator
+            .Run(
+                generatorOptions,
+                async (filePath, currentFileCount, totalFileCount, isCompleted, reporterCancellationToken) =>
+                {
+                    await WriteCandlizeFileProgress(
+                            outputWriter,
+                            tradeRootDirectory,
+                            filePath,
+                            currentFileCount,
+                            totalFileCount,
+                            isCompleted,
+                            reporterCancellationToken)
+                        .ConfigureAwait(false);
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
 
         await outputWriter.WriteLineAsync($"Input trades:".PadLeft(20) + generationResult.InputTradeCount).ConfigureAwait(false);
         await outputWriter.WriteLineAsync($"Unique trades:".PadLeft(20) + generationResult.UniqueTradeCount).ConfigureAwait(false);
@@ -84,6 +103,7 @@ internal class QuantaCandleRunner(
         EnsureSupportedExchange(runOptions.Exchange);
 
         var tradeRootDirectory = GetTradeRootDirectory(runOptions);
+        EnsureTradeInputDirectoryExists(tradeRootDirectory, runOptions.Exchange, runOptions.Instrument);
         await outputWriter.WriteLineAsync($"Scanning local trade files for {runOptions.Exchange}:{runOptions.Instrument}...").ConfigureAwait(false);
         var candidateFileResolution = ResolveCandidateFiles(tradeRootDirectory, runOptions.Exchange, runOptions.Instrument, runOptions.Dates);
         EnsureRequestedDatesWereResolved(runOptions, tradeRootDirectory, candidateFileResolution);
@@ -167,6 +187,7 @@ internal class QuantaCandleRunner(
     public async Task<int> Scan(CliOptions runOptions, TextWriter outputWriter, CancellationToken terminator)
     {
         var tradeRootDirectory = GetTradeRootDirectory(runOptions);
+        EnsureTradeInputDirectoryExists(tradeRootDirectory, runOptions.Exchange, runOptions.Instrument);
         var candidateFileResolution = ResolveCandidateFiles(tradeRootDirectory, runOptions.Exchange, runOptions.Instrument, runOptions.Dates);
         EnsureRequestedDatesWereResolved(runOptions, tradeRootDirectory, candidateFileResolution);
         var scanRequest = new TradeGapScanRequest(tradeRootDirectory, candidateFileResolution.ResolvedFiles, []);
@@ -318,7 +339,63 @@ internal class QuantaCandleRunner(
     /// </summary>
     private static string GetTradeRootDirectory(CliOptions runOptions)
     {
-        var result = Path.GetFullPath(runOptions.WorkDirectory);
+        var result = CliPathRootResolver.GetTradeDataRoot(runOptions.WorkDirectory);
+        return result;
+    }
+
+    private static void EnsureTradeInputDirectoryExists(string tradeRootDirectory, string exchange, string instrument)
+    {
+        var expectedDirectory = Path.Combine(tradeRootDirectory, exchange, instrument);
+        if (!Directory.Exists(expectedDirectory))
+        {
+            var expectedPathExample = Path.Combine(expectedDirectory, "2026-03-28.jsonl");
+            throw new ArgumentException(
+                $"Expected trade input structure '<workDir>\\trade-data\\<exchange>\\<instrument>\\yyyy-MM-dd.jsonl'. Missing directory '{expectedDirectory}'. Example path: '{expectedPathExample}'.");
+        }
+    }
+
+    /// <summary>
+    /// Writes deterministic per-file candlize progress using the existing CLI text style.
+    /// </summary>
+    private static async Task WriteCandlizeFileProgress(
+        TextWriter outputWriter,
+        string tradeRootDirectory,
+        string filePath,
+        int currentFileCount,
+        int totalFileCount,
+        bool isCompleted,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var relativePath = Path.GetRelativePath(tradeRootDirectory, filePath);
+        if (!isCompleted)
+        {
+            await outputWriter
+                .WriteLineAsync($"File {currentFileCount + 1}/{totalFileCount}: processing '{relativePath}'.")
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            var renderedProgress = RenderCandlizeFileProgress(currentFileCount, totalFileCount);
+            await outputWriter
+                .WriteLineAsync($"Candlize progress: {renderedProgress} '{relativePath}'")
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Renders the pseudo-graphic file progress line for candlize execution.
+    /// </summary>
+    private static string RenderCandlizeFileProgress(int completedFileCount, int totalFileCount)
+    {
+        var completedRatio = totalFileCount == 0
+            ? 1m
+            : Math.Clamp((decimal)completedFileCount / totalFileCount, 0m, 1m);
+        var filledWidth = (int)Math.Round(completedRatio * CandlizeFileProgressBarWidth, MidpointRounding.AwayFromZero);
+        var bar = "[" + new string('#', filledWidth) + new string('-', CandlizeFileProgressBarWidth - filledWidth) + "]";
+        var percent = (completedRatio * 100m).ToString("0", System.Globalization.CultureInfo.InvariantCulture).PadLeft(3);
+        var result = $"{bar} {percent}% files {completedFileCount}/{totalFileCount}";
         return result;
     }
 

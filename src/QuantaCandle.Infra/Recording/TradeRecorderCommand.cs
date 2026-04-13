@@ -51,7 +51,7 @@ public static class TradeRecorderCommand
         var flushInterval = GetDurationOption(options, "flushInterval", TimeSpan.FromSeconds(1));
         var checkpointInterval = GetDurationOption(options, "checkpointInterval", TimeSpan.FromHours(1));
         var tradesPerSecond = GetIntOption(options, "rate", 10);
-        var outputDir = GetStringOption(options, "outDir", "trades-out");
+        var outputDir = GetStringOption(options, "outDir", "trade-data");
         var s3Prefix = GetStringOptionOrEnvironment(options, "s3Prefix", "QUANTA_CANDLE_S3_PREFIX", "QUANTA_S3_PREFIX", "S3_PREFIX");
         var binanceWsBase = GetStringOption(options, "binanceWsBase", BinanceTradeSourceOptions.Default.BaseWebSocketUrl);
         var instruments = new List<Instrument>(1) { instrument };
@@ -85,11 +85,12 @@ public static class TradeRecorderCommand
         writer.WriteLine("QuantaCandle.TradeRecorder");
         writer.WriteLine();
         writer.WriteLine("Usage:");
-        writer.WriteLine("  BTCUSDT --exchange Binance|-x Binance [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--cacheSize 1024] [--sink file|s3|null|-to file|s3|null] [--outDir trades-out]");
+        writer.WriteLine("  BTCUSDT --exchange Binance|-x Binance [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--cacheSize 1024] [--sink file|s3|null|-to file|s3|null] [--outDir trade-data]");
         writer.WriteLine("    Omit --duration to keep recording until the host or process is stopped.");
         writer.WriteLine("    Default sink: file. Use --sink null to disable durable trade output intentionally.");
         writer.WriteLine("    S3 sink options: --s3Bucket my-bucket [--s3Prefix trades/raw] (env: QUANTA_CANDLE_S3_BUCKET, QUANTA_CANDLE_S3_PREFIX)");
         writer.WriteLine("    Binance options: [--binanceWsBase wss://stream.binance.com:9443] (try wss://stream.binance.us:9443 in the US)");
+        writer.WriteLine("    Local trade output: <working-dir>\\trade-data\\<exchange>\\<instrument>\\yyyy-MM-dd.jsonl");
     }
 
     private static bool IsHelpArgument(string value)

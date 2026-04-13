@@ -56,10 +56,129 @@ public sealed class QuantaCandleRunnerTests
     }
 
     [Fact]
+    public async Task CandlizeWithMultipleFilesReportsProcessedFilesInOrder()
+    {
+        var root = CreateTempRoot();
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            await WriteTradeFileAsync(
+                root,
+                "Binance",
+                "BTC-USDT",
+                "2026-03-12.jsonl",
+                Trade("Binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.5m));
+            await WriteTradeFileAsync(
+                root,
+                "Binance",
+                "BTC-USDT",
+                "2026-03-13.jsonl",
+                Trade("Binance", "BTC-USDT", "2", "2026-03-13T12:00:05Z", 101m, 0.25m));
+
+            var exitCode = await sut.Candlize(
+                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", string.Empty, []),
+                outputWriter,
+                CancellationToken.None);
+
+            var output = outputWriter.ToString();
+            var firstLine = $"File 1/2: processing '{Path.Combine("binance", "BTC-USDT", "2026-03-12.jsonl")}'.";
+            var secondLine = $"File 2/2: processing '{Path.Combine("binance", "BTC-USDT", "2026-03-13.jsonl")}'.";
+            Assert.Equal(0, exitCode);
+            Assert.True(output.IndexOf(firstLine, StringComparison.Ordinal) >= 0);
+            Assert.True(output.IndexOf(secondLine, StringComparison.Ordinal) > output.IndexOf(firstLine, StringComparison.Ordinal));
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task CandlizeWithMultipleFilesAdvancesProgressIndicatorAsFilesComplete()
+    {
+        var root = CreateTempRoot();
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            await WriteTradeFileAsync(
+                root,
+                "Binance",
+                "BTC-USDT",
+                "2026-03-12.jsonl",
+                Trade("Binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.5m));
+            await WriteTradeFileAsync(
+                root,
+                "Binance",
+                "BTC-USDT",
+                "2026-03-13.jsonl",
+                Trade("Binance", "BTC-USDT", "2", "2026-03-13T12:00:05Z", 101m, 0.25m));
+
+            var exitCode = await sut.Candlize(
+                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", string.Empty, []),
+                outputWriter,
+                CancellationToken.None);
+
+            var output = outputWriter.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Candlize progress: [############------------]  50% files 1/2", output, StringComparison.Ordinal);
+            Assert.Contains("Candlize progress: [########################] 100% files 2/2", output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task CandlizeWithSingleFileReportsSensibleProgressOutput()
+    {
+        var root = CreateTempRoot();
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            await WriteTradeFileAsync(
+                root,
+                "Binance",
+                "BTC-USDT",
+                "2026-03-12.jsonl",
+                Trade("Binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.5m));
+
+            var exitCode = await sut.Candlize(
+                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 3, 12)]),
+                outputWriter,
+                CancellationToken.None);
+
+            var output = outputWriter.ToString();
+            Assert.Equal(0, exitCode);
+            Assert.Contains($"File 1/1: processing '{Path.Combine("binance", "BTC-USDT", "2026-03-12.jsonl")}'.", output, StringComparison.Ordinal);
+            Assert.Contains("Candlize progress: [########################] 100% files 1/1", output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
     public async Task ScanResolvesRequestedDatesIntoCandidateFiles()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
@@ -130,9 +249,11 @@ public sealed class QuantaCandleRunnerTests
         var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
         var workDirectory = CreateTempRoot();
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
 
         try
         {
+            Directory.CreateDirectory(instrumentDirectory);
             var exitCode = await sut.Scan(
                 new CliOptions(CliMode.Scan, workDirectory, "Binance", "BTC-USDT", string.Empty, []),
                 outputWriter,
@@ -140,7 +261,7 @@ public sealed class QuantaCandleRunnerTests
 
             Assert.Equal(0, exitCode);
             Assert.NotNull(capturedRequest);
-            Assert.Equal(Path.GetFullPath(workDirectory), capturedRequest!.RootDirectory);
+            Assert.Equal(Path.Combine(Path.GetFullPath(workDirectory), "trade-data"), capturedRequest!.RootDirectory);
             Assert.Contains("Files scanned:", outputWriter.ToString(), StringComparison.Ordinal);
             Assert.Contains("Trades scanned:", outputWriter.ToString(), StringComparison.Ordinal);
             Assert.Contains("Gaps found:", outputWriter.ToString(), StringComparison.Ordinal);
@@ -167,7 +288,7 @@ public sealed class QuantaCandleRunnerTests
     public async Task HealDispatchesSingleDateGapToHealer()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
@@ -223,7 +344,7 @@ public sealed class QuantaCandleRunnerTests
 
             Assert.Equal(0, exitCode);
             Assert.NotNull(capturedRequest);
-            Assert.Equal(Path.GetFullPath(workDirectory), capturedRequest!.RootDirectory);
+            Assert.Equal(Path.Combine(Path.GetFullPath(workDirectory), "trade-data"), capturedRequest!.RootDirectory);
             Assert.Equal(new ExchangeId("Binance"), capturedRequest.Exchange);
             Assert.Equal(Instrument.Parse("BTC-USDT"), capturedRequest.Symbol);
             Assert.Equal(101, capturedRequest.MissingTradeIdStart);
@@ -240,7 +361,7 @@ public sealed class QuantaCandleRunnerTests
     public async Task HealRunsBoundaryPassBeforeInteriorPassForSingleFile()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = new Mock<ITradeGapScanAugmenter>(MockBehavior.Strict);
@@ -341,7 +462,7 @@ public sealed class QuantaCandleRunnerTests
     public async Task HealWithoutDatesProcessesMultipleFilesIndependently()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
@@ -418,7 +539,7 @@ public sealed class QuantaCandleRunnerTests
     public async Task HealTreatsBoundaryMismatchAsFileLocalIssue()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
@@ -503,7 +624,7 @@ public sealed class QuantaCandleRunnerTests
     public async Task HealTreatsInteriorGapAsFileLocalIssue()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
@@ -559,7 +680,7 @@ public sealed class QuantaCandleRunnerTests
     public async Task HealReportsMixedMultiFileTotalsWhenOnlyOneFileHasGaps()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
@@ -615,7 +736,7 @@ public sealed class QuantaCandleRunnerTests
     public async Task HealDoesNotDispatchBoundaryRepairWhenAugmentedScanFindsNoGaps()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = new Mock<ITradeGapScanAugmenter>(MockBehavior.Strict);
@@ -660,7 +781,7 @@ public sealed class QuantaCandleRunnerTests
     public async Task HealPropagatesBoundaryResolutionFailureFromAugmenter()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = new Mock<ITradeGapScanAugmenter>(MockBehavior.Strict);
@@ -712,7 +833,7 @@ public sealed class QuantaCandleRunnerTests
 
         try
         {
-            Directory.CreateDirectory(Path.Combine(workDirectory, "Binance", "BTC-USDT"));
+            Directory.CreateDirectory(Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT"));
 
             var exception = await Assert.ThrowsAsync<ArgumentException>(() => sut.Scan(
                 new CliOptions(CliMode.Scan, workDirectory, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 4, 9)]),
@@ -723,9 +844,9 @@ public sealed class QuantaCandleRunnerTests
             Assert.Contains("instrument 'BTC-USDT'", exception.Message, StringComparison.Ordinal);
             Assert.Contains("requested date(s) [2026-04-09]", exception.Message, StringComparison.Ordinal);
             Assert.Contains("missing date(s) [2026-04-09]", exception.Message, StringComparison.Ordinal);
-            Assert.Contains($"root directory '{Path.GetFullPath(workDirectory)}'", exception.Message, StringComparison.Ordinal);
+            Assert.Contains($"root directory '{Path.Combine(Path.GetFullPath(workDirectory), "trade-data")}'", exception.Message, StringComparison.Ordinal);
             Assert.Contains(
-                TradeLocalDailyFilePath.Build(Path.GetFullPath(workDirectory), new ExchangeId("Binance"), Instrument.Parse("BTC-USDT"), new DateOnly(2026, 4, 9)),
+                TradeLocalDailyFilePath.Build(Path.Combine(Path.GetFullPath(workDirectory), "trade-data"), new ExchangeId("Binance"), Instrument.Parse("BTC-USDT"), new DateOnly(2026, 4, 9)),
                 exception.Message,
                 StringComparison.Ordinal);
             scannerMoq.Verify(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -740,7 +861,7 @@ public sealed class QuantaCandleRunnerTests
     public async Task ScanWithPartialRequestedDatesFailsAndMentionsMissingDate()
     {
         var workDirectory = CreateTempRoot();
-        var instrumentDirectory = Path.Combine(workDirectory, "Binance", "BTC-USDT");
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
@@ -788,7 +909,7 @@ public sealed class QuantaCandleRunnerTests
 
         try
         {
-            Directory.CreateDirectory(Path.Combine(workDirectory, "Binance", "BTC-USDT"));
+            Directory.CreateDirectory(Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT"));
 
             var exception = await Assert.ThrowsAsync<ArgumentException>(() => sut.Heal(
                 new CliOptions(CliMode.Heal, workDirectory, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 4, 9)]),
@@ -808,34 +929,56 @@ public sealed class QuantaCandleRunnerTests
     }
 
     [Fact]
-    public async Task ScanWithoutDatesRemainsDiscoveryModeWhenNoFilesExist()
+    public async Task ScanWithoutDatesFailsExplicitlyWhenTradeDataStructureIsMissing()
     {
         var workDirectory = CreateTempRoot();
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
-        TradeGapScanRequest? capturedRequest = null;
-
-        scannerMoq
-            .Setup(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<TradeGapScanRequest, CancellationToken>((request, _) => capturedRequest = request)
-            .Returns(new ValueTask<TradeGapScanResult>(new TradeGapScanResult(0, 0, 0, [], [], [])));
 
         var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
         using var outputWriter = new StringWriter();
 
         try
         {
-            var exitCode = await sut.Scan(
+            var exception = await Assert.ThrowsAsync<ArgumentException>(() => sut.Scan(
                 new CliOptions(CliMode.Scan, workDirectory, "Binance", "BTC-USDT", string.Empty, []),
                 outputWriter,
-                CancellationToken.None);
+                CancellationToken.None));
 
-            Assert.Equal(0, exitCode);
-            Assert.NotNull(capturedRequest);
-            Assert.Empty(capturedRequest!.CandidateFiles);
-            Assert.Contains("Files scanned:", outputWriter.ToString(), StringComparison.Ordinal);
-            scannerMoq.Verify(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+            Assert.Contains("<workDir>\\trade-data\\<exchange>\\<instrument>\\yyyy-MM-dd.jsonl", exception.Message, StringComparison.Ordinal);
+            Assert.Contains(Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT"), exception.Message, StringComparison.Ordinal);
+            Assert.Contains(Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT", "2026-03-28.jsonl"), exception.Message, StringComparison.Ordinal);
+            scannerMoq.Verify(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(workDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task HealWithoutDatesFailsExplicitlyWhenTradeDataStructureIsMissing()
+    {
+        var workDirectory = CreateTempRoot();
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            var exception = await Assert.ThrowsAsync<ArgumentException>(() => sut.Heal(
+                new CliOptions(CliMode.Heal, workDirectory, "Binance", "BTC-USDT", string.Empty, []),
+                outputWriter,
+                CancellationToken.None));
+
+            Assert.Contains("<workDir>\\trade-data\\<exchange>\\<instrument>\\yyyy-MM-dd.jsonl", exception.Message, StringComparison.Ordinal);
+            Assert.Contains(Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT"), exception.Message, StringComparison.Ordinal);
+            Assert.Contains(Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT", "2026-03-28.jsonl"), exception.Message, StringComparison.Ordinal);
+            scannerMoq.Verify(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+            healerMoq.Verify(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         }
         finally
         {
@@ -964,7 +1107,7 @@ public sealed class QuantaCandleRunnerTests
 
     private static async Task WriteTradeFileAsync(string workDirectory, string exchange, string instrument, string fileName, params object[] trades)
     {
-        var directory = Path.Combine(workDirectory, "trades-out", exchange, instrument);
+        var directory = Path.Combine(workDirectory, "trade-data", exchange, instrument);
         Directory.CreateDirectory(directory);
 
         var path = Path.Combine(directory, fileName);

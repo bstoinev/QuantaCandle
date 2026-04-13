@@ -54,13 +54,13 @@ Trade Recorder has no subcommands. The instrument is the first positional argume
 Record trades to a local directory and keep running until you stop the process:
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --sink file --outDir trades-out
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --sink file --outDir trade-data
 ```
 
 Run a bounded local collection that exits on its own after 30 seconds:
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --duration 30s --sink file --outDir trades-out
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --duration 30s --sink file --outDir trade-data
 ```
 
 Record trades and dispatch finalized files to S3:
@@ -72,12 +72,13 @@ dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exch
 Use the sink alias and Binance US websocket endpoint for a local US smoke test:
 
 ```powershell
-dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT -x Binance -to file --outDir trades-out --binanceWsBase wss://stream.binance.us:9443
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT -x Binance -to file --outDir trade-data --binanceWsBase wss://stream.binance.us:9443
 ```
 
-Trade output layout:
-- Local finalized trades: `<outDir>\<EXCHANGE>\<INSTRUMENT>\<yyyy-MM-dd>.jsonl`
-- Local scratch checkpoint: `<outDir>\<EXCHANGE>\<INSTRUMENT>\qc-scratch.jsonl`
+Working directory structure:
+- Trade inputs and recorder output: `<working-dir>\trade-data\<exchange>\<instrument>\<yyyy-MM-dd>.jsonl`
+- Trade scratch checkpoint: `<working-dir>\trade-data\<exchange>\<instrument>\qc-scratch.jsonl`
+- Candle outputs: `<working-dir>\candle-data\<exchange>\<instrument>\<yyyy-MM-dd>.csv`
 
 ### QuantaCandle.CLI
 
@@ -111,9 +112,9 @@ Heal bounded trade ID gaps for a specific date:
 dotnet run -c Release --project src\QuantaCandle.CLI -- heal BTC-USDT --exchange Binance --workDir . --dates 2026-03-28
 ```
 
-Trade input layout used by `qc`: `<workDir>\trades-out\<exchange>\<INSTRUMENT>\<yyyy-MM-dd>.jsonl`
+Trade input layout used by `qc`: `<workDir>\trade-data\<exchange>\<INSTRUMENT>\<yyyy-MM-dd>.jsonl`
 
-Default candle output format (CSV): `<workDir>\candles-out\<exchange>\1m\<INSTRUMENT>\<yyyy-MM-dd>.csv`
+Default candle output format (CSV): `<workDir>\candle-data\<exchange>\<INSTRUMENT>\<yyyy-MM-dd>.csv`
 
 Current output formats:
 - CSV is currently the default and only documented workflow for `qc`.
@@ -135,15 +136,15 @@ $root = Join-Path (Get-Location) "tmp-e2e"
 $workDir = $root
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 
-dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --sink file --outDir (Join-Path $workDir "trades-out") --binanceWsBase wss://stream.binance.us:9443
+dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- BTCUSDT --exchange Binance --sink file --outDir (Join-Path $workDir "trade-data") --binanceWsBase wss://stream.binance.us:9443
 
 # Stop it manually after a short sample window, then generate candles from the recorded trades.
 
 dotnet run -c Release --project src\QuantaCandle.CLI -- scan BTC-USDT --exchange Binance --workDir $workDir
 dotnet run -c Release --project src\QuantaCandle.CLI -- candlize BTC-USDT --exchange Binance --workDir $workDir
 
-Get-ChildItem -Recurse (Join-Path $workDir "candles-out") -Filter *.csv | Sort-Object FullName
-$firstCandleFile = Get-ChildItem -Recurse (Join-Path $workDir "candles-out\binance\1m\BTC-USDT") -Filter *.csv | Sort-Object FullName | Select-Object -First 1
+Get-ChildItem -Recurse (Join-Path $workDir "candle-data") -Filter *.csv | Sort-Object FullName
+$firstCandleFile = Get-ChildItem -Recurse (Join-Path $workDir "candle-data\binance\BTC-USDT") -Filter *.csv | Sort-Object FullName | Select-Object -First 1
 Get-Content $firstCandleFile.FullName | Select-Object -First 20
 ```
 

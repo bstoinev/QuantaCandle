@@ -80,7 +80,7 @@ public sealed class TradeRecorderCompositionRootTests
                 new RetryOptions(InitialDelay: TimeSpan.FromMilliseconds(100), MaxDelay: TimeSpan.FromSeconds(5)),
                 new TradeRecorderSourceRegistration(BinanceOptions: null,
                     StubOptions: new TradeSourceStubOptions(Exchange: new ExchangeId("Stub"), TradesPerSecond: 1, StartPrice: 50_000m, PriceStep: 0.01m, Quantity: 0.001m)),
-                new TradeRecorderSinkRegistration(FileOptions: null, S3Options: new TradeSinkS3SimpleOptions(BucketName: "bucket-name", Prefix: "trades", LocalRootDirectory: "trades-out", CheckpointInterval: TimeSpan.FromHours(1))));
+                new TradeRecorderSinkRegistration(FileOptions: null, S3Options: new TradeSinkS3SimpleOptions(BucketName: "bucket-name", Prefix: "trades", LocalRootDirectory: "trade-data", CheckpointInterval: TimeSpan.FromHours(1))));
 
             TradeRecorderCompositionRoot.Configure(container, options);
 
