@@ -36,8 +36,9 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal("High", rows[0][3]);
             Assert.Equal("Low", rows[0][4]);
             Assert.Equal("Close", rows[0][5]);
-            Assert.Equal("Volume", rows[0][6]);
-            Assert.Equal("TradeCount", rows[0][7]);
+            Assert.Equal("BaseVolume", rows[0][6]);
+            Assert.Equal("QuoteVolume", rows[0][7]);
+            Assert.Equal("TradeCount", rows[0][8]);
             Assert.Equal(DateTimeOffset.Parse("2026-03-12T12:00:00Z"), DateTimeOffset.Parse(rows[1][0], CultureInfo.InvariantCulture));
             Assert.Equal("BTC-USDT", rows[1][1]);
             Assert.Equal("100", rows[1][2]);
@@ -45,7 +46,8 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal("100", rows[1][4]);
             Assert.Equal("101", rows[1][5]);
             Assert.Equal("0.3", rows[1][6]);
-            Assert.Equal("2", rows[1][7]);
+            Assert.Equal("30.2", rows[1][7]);
+            Assert.Equal("2", rows[1][8]);
         }
         finally
         {
@@ -99,7 +101,8 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal(101m, candles[0].GetProperty("high").GetDecimal());
             Assert.Equal(100m, candles[0].GetProperty("low").GetDecimal());
             Assert.Equal(101m, candles[0].GetProperty("close").GetDecimal());
-            Assert.Equal(0.3m, candles[0].GetProperty("volume").GetDecimal());
+            Assert.Equal(0.3m, candles[0].GetProperty("baseVolume").GetDecimal());
+            Assert.Equal(30.2m, candles[0].GetProperty("quoteVolume").GetDecimal());
         }
         finally
         {
@@ -134,6 +137,7 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal(string.Empty, gap[5]);
             Assert.Equal("0", gap[6]);
             Assert.Equal("0", gap[7]);
+            Assert.Equal("0", gap[8]);
         }
         finally
         {
@@ -177,6 +181,33 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
+    public async Task AggregatesBaseVolumeAndQuoteVolumeAcrossMultipleTrades()
+    {
+        var root = CreateTempRoot();
+
+        try
+        {
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-03-12.jsonl",
+                Trade("binance", "BTC-USDT", "3", "2026-03-12T12:00:45Z", 99m, 0.4m),
+                Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m),
+                Trade("binance", "BTC-USDT", "2", "2026-03-12T12:00:20Z", 101m, 0.2m));
+
+            await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
+
+            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var rows = await ReadCsvRowsAsync(csvPath);
+
+            Assert.Equal("0.7", rows[1][6]);
+            Assert.Equal("69.8", rows[1][7]);
+            Assert.Equal("3", rows[1][8]);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
     public async Task DropsDuplicateTradesByTradeKey()
     {
         var root = CreateTempRoot();
@@ -197,7 +228,8 @@ public sealed class TradeToCandleGeneratorTests
             var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
             var rows = await ReadCsvRowsAsync(csvPath);
             Assert.Equal("0.75", rows[1][6]);
-            Assert.Equal("2", rows[1][7]);
+            Assert.Equal("75.25", rows[1][7]);
+            Assert.Equal("2", rows[1][8]);
         }
         finally
         {

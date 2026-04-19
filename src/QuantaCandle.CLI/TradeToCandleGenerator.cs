@@ -107,7 +107,8 @@ public sealed class TradeToCandleGenerator
                 high = candle.High,
                 low = candle.Low,
                 close = candle.Close,
-                volume = candle.Volume,
+                baseVolume = candle.BaseVolume,
+                quoteVolume = candle.QuoteVolume,
                 tradeCount = candle.TradeCount,
             });
         }
@@ -118,7 +119,7 @@ public sealed class TradeToCandleGenerator
     private static string[] BuildCsvLines(IReadOnlyList<CandleRow> candles)
     {
         var result = new string[candles.Count + 1];
-        result[0] = "OpenTimeUtc,Instrument,Open,High,Low,Close,Volume,TradeCount";
+        result[0] = "OpenTimeUtc,Instrument,Open,High,Low,Close,BaseVolume,QuoteVolume,TradeCount";
 
         for (var i = 0; i < candles.Count; i++)
         {
@@ -128,10 +129,11 @@ public sealed class TradeToCandleGenerator
             var high = candle.High?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
             var low = candle.Low?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
             var close = candle.Close?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            var volume = candle.Volume.ToString(CultureInfo.InvariantCulture);
+            var baseVolume = candle.BaseVolume.ToString(CultureInfo.InvariantCulture);
+            var quoteVolume = candle.QuoteVolume.ToString(CultureInfo.InvariantCulture);
             var tradeCount = candle.TradeCount.ToString(CultureInfo.InvariantCulture);
 
-            result[i + 1] = $"{openTimeUtc},{candle.Instrument},{open},{high},{low},{close},{volume},{tradeCount}";
+            result[i + 1] = $"{openTimeUtc},{candle.Instrument},{open},{high},{low},{close},{baseVolume},{quoteVolume},{tradeCount}";
         }
 
         return result;
@@ -500,7 +502,8 @@ public sealed class TradeToCandleGenerator
                 High: null,
                 Low: null,
                 Close: null,
-                Volume: 0m,
+                BaseVolume: 0m,
+                QuoteVolume: 0m,
                 TradeCount: 0);
         }
         else
@@ -509,7 +512,8 @@ public sealed class TradeToCandleGenerator
             var close = uniqueTrades[endExclusive - 1].Price;
             var high = open;
             var low = open;
-            var volume = 0m;
+            var baseVolume = 0m;
+            var quoteVolume = 0m;
 
             for (var i = startInclusive; i < endExclusive; i++)
             {
@@ -524,7 +528,8 @@ public sealed class TradeToCandleGenerator
                     low = trade.Price;
                 }
 
-                volume += trade.Quantity;
+                baseVolume += trade.Quantity;
+                quoteVolume += trade.Price * trade.Quantity;
             }
 
             result = new CandleRow(
@@ -536,7 +541,8 @@ public sealed class TradeToCandleGenerator
                 high,
                 low,
                 close,
-                volume,
+                baseVolume,
+                quoteVolume,
                 endExclusive - startInclusive);
         }
 
@@ -580,7 +586,8 @@ public sealed class TradeToCandleGenerator
         decimal? High,
         decimal? Low,
         decimal? Close,
-        decimal Volume,
+        decimal BaseVolume,
+        decimal QuoteVolume,
         int TradeCount);
 
     /// <summary>
