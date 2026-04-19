@@ -6,7 +6,8 @@ namespace QuantaCandle.CLI;
 internal class QuantaCandleRunner(
     ITradeGapScanner gapScanner,
     ITradeGapHealer gapHealer,
-    ITradeGapScanAugmenter tradeGapScanAugmenter) : IQuantaCandleRunner
+    ITradeGapScanAugmenter tradeGapScanAugmenter,
+    ITradeDayFileBootstrapper? tradeDayFileBootstrapper = null) : IQuantaCandleRunner
 {
     private const int CandlizeFileProgressBarWidth = 24;
 
@@ -59,6 +60,7 @@ internal class QuantaCandleRunner(
     private readonly ITradeGapScanner _gapScanner = gapScanner ?? throw new ArgumentNullException(nameof(gapScanner));
     private readonly ITradeGapHealer _gapHealer = gapHealer ?? throw new ArgumentNullException(nameof(gapHealer));
     private readonly ITradeGapScanAugmenter _tradeGapScanAugmenter = tradeGapScanAugmenter ?? throw new ArgumentNullException(nameof(tradeGapScanAugmenter));
+    private readonly ITradeDayFileBootstrapper? _tradeDayFileBootstrapper = tradeDayFileBootstrapper;
 
     public async Task<int> Candlize(CliOptions runOptions, TextWriter outputWriter, CancellationToken cancellationToken)
     {
@@ -98,15 +100,23 @@ internal class QuantaCandleRunner(
         EnsureTradeInputDirectoryExists(tradeRootDirectory, runOptions.Exchange, runOptions.Instrument);
         await outputWriter.WriteLineAsync($"Scanning local trade files for {runOptions.Exchange}:{runOptions.Instrument}...").ConfigureAwait(false);
         var candidateFileResolution = ResolveCandidateFiles(tradeRootDirectory, runOptions.Exchange, runOptions.Instrument, runOptions.Dates);
-        EnsureRequestedDatesWereResolved(runOptions, tradeRootDirectory, candidateFileResolution);
         var requestedExchange = new ExchangeId(runOptions.Exchange);
         var requestedInstrument = Instrument.Parse(runOptions.Instrument);
+        var candidateFiles = await ResolveHealCandidateFiles(
+                tradeRootDirectory,
+                requestedExchange,
+                requestedInstrument,
+                runOptions.Dates,
+                candidateFileResolution,
+                outputWriter,
+                cancellationToken)
+            .ConfigureAwait(false);
         var summary = new HealSummary();
-        var totalFileCount = candidateFileResolution.ResolvedFiles.Count;
+        var totalFileCount = candidateFiles.Count;
 
         for (var fileIndex = 0; fileIndex < totalFileCount; fileIndex++)
         {
-            var candidateFile = candidateFileResolution.ResolvedFiles[fileIndex];
+            var candidateFile = candidateFiles[fileIndex];
             await outputWriter
                 .WriteLineAsync($"File {fileIndex + 1}/{totalFileCount}: scanning '{candidateFile.Path}'.")
                 .ConfigureAwait(false);
@@ -332,6 +342,56 @@ internal class QuantaCandleRunner(
     private static string GetTradeRootDirectory(CliOptions runOptions)
     {
         var result = CliPathRootResolver.GetTradeDataRoot(runOptions.WorkDirectory);
+        return result;
+    }
+
+    /// <summary>
+    /// Resolves the per-file heal scope, bootstrapping only explicitly requested missing day files.
+    /// </summary>
+    private async ValueTask<List<TradeGapAffectedFile>> ResolveHealCandidateFiles(
+        string tradeRootDirectory,
+        ExchangeId exchange,
+        Instrument instrument,
+        IReadOnlyList<DateOnly> requestedDates,
+        CandidateFileResolution candidateFileResolution,
+        TextWriter outputWriter,
+        CancellationToken cancellationToken)
+    {
+        var result = candidateFileResolution.ResolvedFiles
+            .OrderBy(static file => file.Path, StringComparer.Ordinal)
+            .ToList();
+
+        if (requestedDates.Count == 0 || candidateFileResolution.MissingFiles.Count == 0)
+        {
+            return result;
+        }
+
+        if (_tradeDayFileBootstrapper is null)
+        {
+            throw new InvalidOperationException("Trade day file bootstrapper is not configured.");
+        }
+
+        foreach (var missingFile in candidateFileResolution.MissingFiles.OrderBy(static file => file.Path, StringComparer.Ordinal))
+        {
+            var utcDate = missingFile.TradingDay
+                ?? throw new InvalidOperationException($"Unable to bootstrap requested trade file '{missingFile.Path}' because its UTC day is unknown.");
+
+            await outputWriter
+                .WriteLineAsync($"Bootstrapping missing requested UTC day '{utcDate:yyyy-MM-dd}' into '{missingFile.Path}'.")
+                .ConfigureAwait(false);
+
+            var bootstrappedFile = await _tradeDayFileBootstrapper
+                .Bootstrap(tradeRootDirectory, exchange, instrument, utcDate, cancellationToken)
+                .ConfigureAwait(false);
+
+            result.Add(bootstrappedFile);
+        }
+
+        result = result
+            .OrderBy(static file => file.TradingDay)
+            .ThenBy(static file => file.Path, StringComparer.Ordinal)
+            .ToList();
+
         return result;
     }
 
@@ -587,6 +647,7 @@ internal class QuantaCandleRunner(
         IReadOnlyList<DateOnly> dates)
     {
         var result = new List<TradeGapAffectedFile>();
+        var missingFiles = new List<TradeGapAffectedFile>();
         var missingDates = new List<DateOnly>();
         var exchangeId = new ExchangeId(exchange);
         var parsedInstrument = Instrument.Parse(instrument);
@@ -607,6 +668,8 @@ internal class QuantaCandleRunner(
                 }
                 else
                 {
+                    var relativePath = Path.GetRelativePath(tradeRootDirectory, fullPath);
+                    missingFiles.Add(new TradeGapAffectedFile(relativePath, date));
                     missingDates.Add(date);
                 }
             }
@@ -620,7 +683,7 @@ internal class QuantaCandleRunner(
             }
         }
 
-        var resolution = new CandidateFileResolution(result, missingDates, expectedPathExample);
+        var resolution = new CandidateFileResolution(result, missingFiles, missingDates, expectedPathExample);
         return resolution;
     }
 }

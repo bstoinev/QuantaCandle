@@ -5,5 +5,6 @@
 /// </summary>
 internal sealed record CandidateFileResolution(
     IReadOnlyList<TradeGapAffectedFile> ResolvedFiles,
+    IReadOnlyList<TradeGapAffectedFile> MissingFiles,
     IReadOnlyList<DateOnly> MissingDates,
     string ExpectedPathExample);

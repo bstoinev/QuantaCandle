@@ -9,6 +9,7 @@ using QuantaCandle.Infra.Storage;
 using SimpleInjector;
 
 [assembly: InternalsVisibleTo("QuantaCandle.CLI.Tests")]
+[assembly: InternalsVisibleTo("DynamicProxyGenAssembly2")]
 
 namespace QuantaCandle.CLI;
 
@@ -24,6 +25,7 @@ internal class Program
         container.RegisterSingleton<ITradeGapFetchClient, BinanceTradeGapFetchClient>();
         container.RegisterSingleton<IBinanceRawTradeLookupClient, BinanceRawTradeLookupClient>();
         container.RegisterSingleton<ITradeDayBoundaryResolver, TradeDayBoundaryResolver>();
+        container.RegisterSingleton<ITradeDayFileBootstrapper, TradeDayFileBootstrapper>();
         container.RegisterSingleton<ITradeGapScanner, LocalFileTradeGapScanner>();
         container.RegisterSingleton<ITradeGapScanAugmenter, StrictTradeDayBoundaryScanAugmenter>();
         container.RegisterSingleton<ITradeGapHealer, LocalFileTradeGapHealer>();

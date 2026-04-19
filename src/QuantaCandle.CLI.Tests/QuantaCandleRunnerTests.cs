@@ -898,27 +898,234 @@ public sealed class QuantaCandleRunnerTests
     }
 
     [Fact]
-    public async Task HealWithRequestedDatesFailsExplicitlyWhenFilesAreMissing()
+    public async Task HealWithRequestedMissingDateBootstrapsFileAndRunsNormalHealFlow()
+    {
+        var workDirectory = CreateTempRoot();
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var bootstrapperMoq = new Mock<ITradeDayFileBootstrapper>(MockBehavior.Strict);
+        var relativePath = Path.Combine("Binance", "BTC-USDT", "2026-04-09.jsonl");
+        var fullPath = Path.Combine(instrumentDirectory, "2026-04-09.jsonl");
+        var gap = CreateGapWithRange("Binance", "BTC-USDT", 1002, 1999, relativePath, 1, 1, "1001", "1001", "2000");
+
+        bootstrapperMoq
+            .Setup(mock => mock.Bootstrap(It.IsAny<string>(), It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), new DateOnly(2026, 4, 9), It.IsAny<CancellationToken>()))
+            .Callback<string, ExchangeId, Instrument, DateOnly, CancellationToken>((rootDirectory, exchange, instrument, utcDate, _) =>
+            {
+                var directory = Path.Combine(rootDirectory, exchange.ToString(), instrument.ToString());
+                Directory.CreateDirectory(directory);
+                var anchorTrade = new[]
+                {
+                    Trade(exchange.ToString(), instrument.ToString(), "1001", $"{utcDate:yyyy-MM-dd}T00:00:00Z", 100m, 0.25m),
+                };
+                var payload = string.Join(Environment.NewLine, anchorTrade.Select(static trade => JsonSerializer.Serialize(trade))) + Environment.NewLine;
+                File.WriteAllText(Path.Combine(directory, $"{utcDate:yyyy-MM-dd}.jsonl"), payload);
+            })
+            .Returns<string, ExchangeId, Instrument, DateOnly, CancellationToken>((rootDirectory, exchange, instrument, utcDate, _) =>
+            {
+                var bootstrappedFullPath = TradeLocalDailyFilePath.Build(rootDirectory, exchange, instrument, utcDate);
+                return ValueTask.FromResult(new TradeGapAffectedFile(Path.GetRelativePath(rootDirectory, bootstrappedFullPath), utcDate));
+            });
+        scannerMoq
+            .Setup(mock => mock.Scan(It.Is<TradeGapScanRequest>(request => request.CandidateFiles.Count == 1 && request.CandidateFiles[0].Path == relativePath), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<TradeGapScanResult>(
+                new TradeGapScanResult(
+                    1,
+                    1,
+                    0,
+                    [gap.Gap],
+                    [new TradeGapAffectedFile(relativePath, new DateOnly(2026, 4, 9))],
+                    [gap.Range!])));
+        healerMoq
+            .Setup(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<TradeGapHealRequest, CancellationToken>((request, _) => new ValueTask<TradeGapHealResult>(CreateHealResult(request, TradeGapHealStatus.Full)));
+
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object, bootstrapperMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            Directory.CreateDirectory(instrumentDirectory);
+
+            var exitCode = await sut.Heal(
+                new CliOptions(CliMode.Heal, workDirectory, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 4, 9)]),
+                outputWriter,
+                CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(fullPath));
+            Assert.Contains("Bootstrapping missing requested UTC day '2026-04-09'", outputWriter.ToString(), StringComparison.Ordinal);
+            bootstrapperMoq.Verify(mock => mock.Bootstrap(It.IsAny<string>(), It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), new DateOnly(2026, 4, 9), It.IsAny<CancellationToken>()), Times.Once);
+            scannerMoq.Verify(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+            healerMoq.Verify(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(workDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task HealWithExistingExplicitDateKeepsCurrentBehaviorWithoutBootstrap()
+    {
+        var workDirectory = CreateTempRoot();
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var bootstrapperMoq = new Mock<ITradeDayFileBootstrapper>(MockBehavior.Strict);
+        var relativePath = Path.Combine("Binance", "BTC-USDT", "2026-04-09.jsonl");
+        var gap = CreateGapWithRange("Binance", "BTC-USDT", 101, 102, relativePath, 1, 2, "100", "103");
+
+        scannerMoq
+            .Setup(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask<TradeGapScanResult>(
+                new TradeGapScanResult(
+                    1,
+                    2,
+                    0,
+                    [gap.Gap],
+                    [new TradeGapAffectedFile(relativePath, new DateOnly(2026, 4, 9))],
+                    [gap.Range!])));
+        healerMoq
+            .Setup(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<TradeGapHealRequest, CancellationToken>((request, _) => new ValueTask<TradeGapHealResult>(CreateHealResult(request, TradeGapHealStatus.Full)));
+
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object, bootstrapperMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            Directory.CreateDirectory(instrumentDirectory);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-04-09.jsonl"), "{}", CancellationToken.None);
+
+            var exitCode = await sut.Heal(
+                new CliOptions(CliMode.Heal, workDirectory, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 4, 9)]),
+                outputWriter,
+                CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            bootstrapperMoq.Verify(mock => mock.Bootstrap(It.IsAny<string>(), It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
+            scannerMoq.Verify(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+            healerMoq.Verify(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(workDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task HealWithMixedExplicitDatesBootstrapsOnlyMissingFiles()
+    {
+        var workDirectory = CreateTempRoot();
+        var instrumentDirectory = Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT");
+        var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
+        var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
+        var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
+        var bootstrapperMoq = new Mock<ITradeDayFileBootstrapper>(MockBehavior.Strict);
+        var firstRelativePath = Path.Combine("Binance", "BTC-USDT", "2026-04-09.jsonl");
+        var secondRelativePath = Path.Combine("Binance", "BTC-USDT", "2026-04-10.jsonl");
+        var capturedScanPaths = new List<string>();
+
+        bootstrapperMoq
+            .Setup(mock => mock.Bootstrap(It.IsAny<string>(), It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), new DateOnly(2026, 4, 10), It.IsAny<CancellationToken>()))
+            .Callback<string, ExchangeId, Instrument, DateOnly, CancellationToken>((rootDirectory, exchange, instrument, utcDate, _) =>
+            {
+                var directory = Path.Combine(rootDirectory, exchange.ToString(), instrument.ToString());
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(
+                    Path.Combine(directory, $"{utcDate:yyyy-MM-dd}.jsonl"),
+                    JsonSerializer.Serialize(Trade(exchange.ToString(), instrument.ToString(), "200", $"{utcDate:yyyy-MM-dd}T00:00:00Z", 101m, 0.5m)) + Environment.NewLine);
+            })
+            .Returns<string, ExchangeId, Instrument, DateOnly, CancellationToken>((rootDirectory, exchange, instrument, utcDate, _) =>
+            {
+                var bootstrappedFullPath = TradeLocalDailyFilePath.Build(rootDirectory, exchange, instrument, utcDate);
+                return ValueTask.FromResult(new TradeGapAffectedFile(Path.GetRelativePath(rootDirectory, bootstrappedFullPath), utcDate));
+            });
+        scannerMoq
+            .Setup(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TradeGapScanRequest, CancellationToken>((request, _) => capturedScanPaths.Add(Assert.Single(request.CandidateFiles).Path))
+            .Returns<TradeGapScanRequest, CancellationToken>((request, _) =>
+            {
+                var candidateFile = Assert.Single(request.CandidateFiles);
+                var gap = candidateFile.Path.EndsWith("2026-04-09.jsonl", StringComparison.Ordinal)
+                    ? CreateGapWithRange("Binance", "BTC-USDT", 101, 102, firstRelativePath, 1, 2, "100", "103")
+                    : CreateGapWithRange("Binance", "BTC-USDT", 201, 202, secondRelativePath, 1, 2, "200", "203");
+                return new ValueTask<TradeGapScanResult>(
+                    new TradeGapScanResult(
+                        1,
+                        2,
+                        0,
+                        [gap.Gap],
+                        [new TradeGapAffectedFile(candidateFile.Path, candidateFile.TradingDay)],
+                        [gap.Range!]));
+            });
+        healerMoq
+            .Setup(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<TradeGapHealRequest, CancellationToken>((request, _) => new ValueTask<TradeGapHealResult>(CreateHealResult(request, TradeGapHealStatus.Full)));
+
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object, bootstrapperMoq.Object);
+        using var outputWriter = new StringWriter();
+
+        try
+        {
+            Directory.CreateDirectory(instrumentDirectory);
+            await File.WriteAllTextAsync(Path.Combine(instrumentDirectory, "2026-04-09.jsonl"), "{}", CancellationToken.None);
+
+            var exitCode = await sut.Heal(
+                new CliOptions(
+                    CliMode.Heal,
+                    workDirectory,
+                    "Binance",
+                    "BTC-USDT",
+                    string.Empty,
+                    [
+                        new DateOnly(2026, 4, 9),
+                        new DateOnly(2026, 4, 10),
+                    ]),
+                outputWriter,
+                CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal([firstRelativePath, secondRelativePath], capturedScanPaths);
+            bootstrapperMoq.Verify(mock => mock.Bootstrap(It.IsAny<string>(), It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), new DateOnly(2026, 4, 10), It.IsAny<CancellationToken>()), Times.Once);
+            bootstrapperMoq.Verify(mock => mock.Bootstrap(It.IsAny<string>(), It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), new DateOnly(2026, 4, 9), It.IsAny<CancellationToken>()), Times.Never);
+            healerMoq.Verify(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(workDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task HealWithRequestedMissingDateFailsLoudlyWhenBootstrapCannotResolveAnchor()
     {
         var workDirectory = CreateTempRoot();
         var scannerMoq = new Mock<ITradeGapScanner>(MockBehavior.Strict);
         var healerMoq = new Mock<ITradeGapHealer>(MockBehavior.Strict);
         var scanAugmenterMoq = CreatePassThroughScanAugmenterMock();
-        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object);
+        var bootstrapperMoq = new Mock<ITradeDayFileBootstrapper>(MockBehavior.Strict);
+        var sut = new QuantaCandleRunner(scannerMoq.Object, healerMoq.Object, scanAugmenterMoq.Object, bootstrapperMoq.Object);
         using var outputWriter = new StringWriter();
+
+        bootstrapperMoq
+            .Setup(mock => mock.Bootstrap(It.IsAny<string>(), It.IsAny<ExchangeId>(), It.IsAny<Instrument>(), new DateOnly(2026, 4, 9), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Unable to bootstrap missing trade day file 'Binance\\BTC-USDT\\2026-04-09.jsonl' because no Binance anchor trade could be resolved for UTC day 2026-04-09."));
 
         try
         {
             Directory.CreateDirectory(Path.Combine(workDirectory, "trade-data", "Binance", "BTC-USDT"));
 
-            var exception = await Assert.ThrowsAsync<ArgumentException>(() => sut.Heal(
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => sut.Heal(
                 new CliOptions(CliMode.Heal, workDirectory, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 4, 9)]),
                 outputWriter,
                 CancellationToken.None));
 
-            Assert.Contains("exchange 'Binance'", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("instrument 'BTC-USDT'", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("missing date(s) [2026-04-09]", exception.Message, StringComparison.Ordinal);
+            Assert.Equal("Unable to bootstrap missing trade day file 'Binance\\BTC-USDT\\2026-04-09.jsonl' because no Binance anchor trade could be resolved for UTC day 2026-04-09.", exception.Message);
             scannerMoq.Verify(mock => mock.Scan(It.IsAny<TradeGapScanRequest>(), It.IsAny<CancellationToken>()), Times.Never);
             healerMoq.Verify(mock => mock.Heal(It.IsAny<TradeGapHealRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         }
