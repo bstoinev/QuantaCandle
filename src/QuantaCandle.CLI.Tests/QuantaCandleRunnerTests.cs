@@ -35,7 +35,7 @@ public sealed class QuantaCandleRunnerTests
                 Trade("Binance", "BTC-USDT", "2", "2026-03-12T12:00:40Z", 101m, 0.25m));
 
             var exitCode = await sut.Candlize(
-                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", string.Empty, []),
+                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", "1m", []),
                 outputWriter,
                 CancellationToken.None);
 
@@ -81,7 +81,7 @@ public sealed class QuantaCandleRunnerTests
                 Trade("Binance", "BTC-USDT", "2", "2026-03-13T12:00:05Z", 101m, 0.25m));
 
             var exitCode = await sut.Candlize(
-                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", string.Empty, []),
+                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", "1m", []),
                 outputWriter,
                 CancellationToken.None);
 
@@ -124,7 +124,7 @@ public sealed class QuantaCandleRunnerTests
                 Trade("Binance", "BTC-USDT", "2", "2026-03-13T12:00:05Z", 101m, 0.25m));
 
             var exitCode = await sut.Candlize(
-                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", string.Empty, []),
+                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", "1m", []),
                 outputWriter,
                 CancellationToken.None);
 
@@ -159,7 +159,7 @@ public sealed class QuantaCandleRunnerTests
                 Trade("Binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.5m));
 
             var exitCode = await sut.Candlize(
-                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", string.Empty, [new DateOnly(2026, 3, 12)]),
+                new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", "1m", [new DateOnly(2026, 3, 12)]),
                 outputWriter,
                 CancellationToken.None);
 

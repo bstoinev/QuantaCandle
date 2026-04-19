@@ -12,6 +12,7 @@ public sealed class CliCommandTests
         [
             "candlize",
             "btc-usdt",
+            "-time", "10s",
             "--exchange", "Binance",
             "--workDir", "W:\\QuantaCandle",
             "--dates", "20260330,20260401",
@@ -20,8 +21,18 @@ public sealed class CliCommandTests
         Assert.Equal(CliMode.Candlize, options.Mode);
         Assert.Equal("Binance", options.Exchange);
         Assert.Equal("BTC-USDT", options.Instrument);
+        Assert.Equal("10s", options.Timeframe);
         Assert.Equal("W:\\QuantaCandle", options.WorkDirectory);
         Assert.Equal([new DateOnly(2026, 3, 30), new DateOnly(2026, 4, 1)], options.Dates);
+    }
+
+    [Fact]
+    public void ParsesCandlizeCommandWithTimeFrameOption()
+    {
+        var options = CliCommand.Parse(["candlize", "btc-usdt", "--timeFrame", "1m"]);
+
+        Assert.Equal(CliMode.Candlize, options.Mode);
+        Assert.Equal("1m", options.Timeframe);
     }
 
     [Fact]
@@ -77,6 +88,14 @@ public sealed class CliCommandTests
         var exception = Assert.Throws<ArgumentException>(() => CliCommand.Parse(["heal"]));
 
         Assert.Contains("instrument argument is required", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RejectsMissingCandlizeTimeInterval()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => CliCommand.Parse(["candlize", "btc-usdt"]));
+
+        Assert.Equal("Time interval must be provided. Use -time 1m or --timeFrame 10s.", exception.Message);
     }
 
     [Fact]

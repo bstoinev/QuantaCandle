@@ -62,18 +62,10 @@ internal class QuantaCandleRunner(
 
     public async Task<int> Candlize(CliOptions runOptions, TextWriter outputWriter, CancellationToken cancellationToken)
     {
-        var generatorOptions = new CliOptions(
-            runOptions.Mode,
-            runOptions.WorkDirectory,
-            runOptions.Exchange,
-            runOptions.Instrument,
-            "1m",
-            runOptions.Dates,
-            "csv");
         var tradeRootDirectory = CliPathRootResolver.GetTradeDataRoot(runOptions.WorkDirectory);
         var generationResult = await TradeToCandleGenerator
             .Run(
-                generatorOptions,
+                runOptions with { Format = "csv" },
                 async (filePath, currentFileCount, totalFileCount, isCompleted, reporterCancellationToken) =>
                 {
                     await WriteCandlizeFileProgress(

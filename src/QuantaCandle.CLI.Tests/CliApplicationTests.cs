@@ -21,7 +21,7 @@ public sealed class CliApplicationTests
         using var errorWriter = new StringWriter();
 
         var exitCode = await sut.Run(
-            ["candlize", "btc-usdt", "--workDir", "W:\\QuantaCandle", "--dates", "20260330,20260401"],
+            ["candlize", "btc-usdt", "--timeFrame", "10s", "--workDir", "W:\\QuantaCandle", "--dates", "20260330,20260401"],
             outputWriter,
             errorWriter,
             CancellationToken.None);
@@ -32,6 +32,7 @@ public sealed class CliApplicationTests
         Assert.Equal("W:\\QuantaCandle", runner.CandlizeOptions.WorkDirectory);
         Assert.Equal("Binance", runner.CandlizeOptions.Exchange);
         Assert.Equal("BTC-USDT", runner.CandlizeOptions.Instrument);
+        Assert.Equal("10s", runner.CandlizeOptions.Timeframe);
         Assert.Equal(
             [
                 new DateOnly(2026, 3, 30),
@@ -132,6 +133,7 @@ public sealed class CliApplicationTests
         Assert.Equal(0, exitCode);
         Assert.Contains("Quanta Candle CLI", outputWriter.ToString(), StringComparison.Ordinal);
         Assert.Contains("qc heal <instrument>", outputWriter.ToString(), StringComparison.Ordinal);
+        Assert.Contains("--timeFrame", outputWriter.ToString(), StringComparison.Ordinal);
         Assert.Equal(string.Empty, errorWriter.ToString());
         Assert.Equal(0, runner.CandlizeCallCount);
         Assert.Equal(0, runner.ScanCallCount);

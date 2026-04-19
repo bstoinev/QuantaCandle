@@ -8,6 +8,8 @@ namespace QuantaCandle.CLI;
 /// </summary>
 public sealed class TradeToCandleGenerator
 {
+    private const string InvalidTimeIntervalMessage = "Invalid time interval '{0}'. Expected format like 1s, 10s, 1m, 5m, 1h.";
+
     /// <summary>
     /// Generates candles for the requested exchange, instrument, and optional date scope.
     /// </summary>
@@ -20,7 +22,7 @@ public sealed class TradeToCandleGenerator
 
         var exchange = NormalizeSource(options.Exchange);
         var instrument = NormalizeInstrument(options.Instrument);
-        var timeframe = NormalizeTimeframe(options.Timeframe);
+        var timeframe = NormalizeTimeframe(options.Timeframe, out var interval);
         var format = NormalizeFormat(options.Format);
         var workDirectory = Path.GetFullPath(options.WorkDirectory);
         var tradeRootDirectory = GetTradeRootDirectory(workDirectory);
@@ -50,7 +52,7 @@ public sealed class TradeToCandleGenerator
             return emptyResult;
         }
 
-        var candlesByPath = BuildCandlesByOutputPath(uniqueTrades, exchange, timeframe, format, outputRootDirectory);
+        var candlesByPath = BuildCandlesByOutputPath(uniqueTrades, exchange, timeframe, interval, format, outputRootDirectory);
         var outputPaths = candlesByPath.Keys.OrderBy(static path => path, StringComparer.Ordinal).ToArray();
         var candleCount = 0;
 
@@ -223,20 +225,56 @@ public sealed class TradeToCandleGenerator
         return result;
     }
 
-    private static string NormalizeTimeframe(string timeframe)
+    private static string NormalizeTimeframe(string timeframe, out TimeSpan interval)
     {
         if (string.IsNullOrWhiteSpace(timeframe))
         {
-            throw new ArgumentException("Timeframe must be provided.", nameof(timeframe));
+            throw new ArgumentException("Time interval must be provided. Use -time 1m or --timeFrame 10s.", nameof(timeframe));
         }
 
         var result = timeframe.Trim().ToLowerInvariant();
-        if (!result.Equals("1m", StringComparison.Ordinal))
+        if (!TryParseTimeInterval(result, out interval))
         {
-            throw new NotSupportedException("Only timeframe '1m' is currently supported.");
+            throw new ArgumentException(string.Format(CultureInfo.InvariantCulture, InvalidTimeIntervalMessage, result), nameof(timeframe));
         }
 
         return result;
+    }
+
+    private static bool TryParseTimeInterval(string value, out TimeSpan result)
+    {
+        result = default;
+
+        if (string.IsNullOrWhiteSpace(value) || value.Length < 2)
+        {
+            return false;
+        }
+
+        var unit = value[^1];
+        var numericPart = value[..^1];
+        if (!int.TryParse(numericPart, NumberStyles.None, CultureInfo.InvariantCulture, out var quantity) || quantity <= 0)
+        {
+            return false;
+        }
+
+        if (unit == 's')
+        {
+            result = TimeSpan.FromSeconds(quantity);
+        }
+        else if (unit == 'm')
+        {
+            result = TimeSpan.FromMinutes(quantity);
+        }
+        else if (unit == 'h')
+        {
+            result = TimeSpan.FromHours(quantity);
+        }
+        else
+        {
+            return false;
+        }
+
+        return result > TimeSpan.Zero;
     }
 
     private static string NormalizeFormat(string format)
@@ -377,6 +415,7 @@ public sealed class TradeToCandleGenerator
         IReadOnlyList<TradeRow> uniqueTrades,
         string exchange,
         string timeframe,
+        TimeSpan interval,
         string format,
         string outputRootDirectory)
     {
@@ -393,7 +432,7 @@ public sealed class TradeToCandleGenerator
                 index++;
             }
 
-            AppendInstrumentCandles(uniqueTrades, start, index, exchange, timeframe, instrument, extension, outputRootDirectory, result);
+            AppendInstrumentCandles(uniqueTrades, start, index, exchange, timeframe, interval, instrument, extension, outputRootDirectory, result);
         }
 
         return result;
@@ -405,27 +444,28 @@ public sealed class TradeToCandleGenerator
         int endExclusive,
         string exchange,
         string timeframe,
+        TimeSpan interval,
         string instrument,
         string extension,
         string outputRootDirectory,
         Dictionary<string, List<CandleRow>> candlesByPath)
     {
-        var firstBucket = FloorToMinute(uniqueTrades[startInclusive].TimestampUtc);
-        var lastBucket = FloorToMinute(uniqueTrades[endExclusive - 1].TimestampUtc);
+        var firstBucket = FloorToInterval(uniqueTrades[startInclusive].TimestampUtc, interval);
+        var lastBucket = FloorToInterval(uniqueTrades[endExclusive - 1].TimestampUtc, interval);
         var tradeIndex = startInclusive;
         var currentBucket = firstBucket;
 
         while (currentBucket <= lastBucket)
         {
             var bucketStart = tradeIndex;
-            while (tradeIndex < endExclusive && FloorToMinute(uniqueTrades[tradeIndex].TimestampUtc) == currentBucket)
+            while (tradeIndex < endExclusive && FloorToInterval(uniqueTrades[tradeIndex].TimestampUtc, interval) == currentBucket)
             {
                 tradeIndex++;
             }
 
             var candle = BuildCandleForBucket(uniqueTrades, bucketStart, tradeIndex, exchange, timeframe, instrument, currentBucket);
             var day = currentBucket.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            var outputPath = Path.Combine(outputRootDirectory, instrument, $"{day}{extension}");
+            var outputPath = Path.Combine(outputRootDirectory, instrument, timeframe, $"{day}{extension}");
 
             if (!candlesByPath.TryGetValue(outputPath, out var list))
             {
@@ -434,7 +474,7 @@ public sealed class TradeToCandleGenerator
             }
 
             list.Add(candle);
-            currentBucket = currentBucket.AddMinutes(1);
+            currentBucket = currentBucket.Add(interval);
         }
     }
 
@@ -503,11 +543,12 @@ public sealed class TradeToCandleGenerator
         return result;
     }
 
-    private static DateTimeOffset FloorToMinute(DateTimeOffset timestamp)
+    private static DateTimeOffset FloorToInterval(DateTimeOffset timestamp, TimeSpan interval)
     {
-        var utc = timestamp.UtcDateTime;
-        var floored = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, utc.Minute, 0, DateTimeKind.Utc);
-        var result = new DateTimeOffset(floored);
+        var utcTimestamp = timestamp.ToUniversalTime();
+        var intervalTicks = interval.Ticks;
+        var flooredTicks = utcTimestamp.Ticks / intervalTicks * intervalTicks;
+        var result = new DateTimeOffset(flooredTicks, TimeSpan.Zero);
         return result;
     }
 

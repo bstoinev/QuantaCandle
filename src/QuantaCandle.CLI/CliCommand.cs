@@ -32,7 +32,8 @@ public static class CliCommand
         var dates = GetDates(options);
         var exchange = GetStringOption(options, "exchange", "Binance");
         var workDirectory = GetStringOption(options, "workDir", Directory.GetCurrentDirectory());
-        var result = new CliOptions(mode, workDirectory, exchange, instrument.ToString(), string.Empty, dates);
+        var timeframe = GetTimeframe(mode, options);
+        var result = new CliOptions(mode, workDirectory, exchange, instrument.ToString(), timeframe, dates);
 
         return result;
     }
@@ -47,7 +48,7 @@ public static class CliCommand
         writer.WriteLine("Quanta Candle CLI");
         writer.WriteLine();
         writer.WriteLine("Usage:");
-        writer.WriteLine("  qc candlize <instrument> [--workDir <path>|-dir <path>] [--exchange <name>|-x <name>] [--dates <yyyy-MM-dd|yyyyMMdd,...>|-on <yyyy-MM-dd|yyyyMMdd,...>]");
+        writer.WriteLine("  qc candlize <instrument> <-time <interval>|--timeFrame <interval>> [--workDir <path>|-dir <path>] [--exchange <name>|-x <name>] [--dates <yyyy-MM-dd|yyyyMMdd,...>|-on <yyyy-MM-dd|yyyyMMdd,...>]");
         writer.WriteLine("  qc scan <instrument> [--workDir <path>|-dir <path>] [--exchange <name>|-x <name>] [--dates <yyyy-MM-dd|yyyyMMdd,...>|-on <yyyy-MM-dd|yyyyMMdd,...>]");
         writer.WriteLine("  qc heal <instrument> [--workDir <path>|-dir <path>] [--exchange <name>|-x <name>] [--dates <yyyy-MM-dd|yyyyMMdd,...>|-on <yyyy-MM-dd|yyyyMMdd,...>]");
         writer.WriteLine();
@@ -57,7 +58,8 @@ public static class CliCommand
         writer.WriteLine("  - --workDir defaults to the current directory.");
         writer.WriteLine("  - --exchange defaults to Binance.");
         writer.WriteLine("  - Trade inputs are read from <workDir>\\trade-data\\<exchange>\\<INSTRUMENT>\\yyyy-MM-dd.jsonl.");
-        writer.WriteLine("  - Candle outputs are written to <workDir>\\candle-data\\<exchange>\\<INSTRUMENT>\\yyyy-MM-dd.csv.");
+        writer.WriteLine("  - candlize requires -time or --timeFrame using values like 1s, 10s, 1m, 5m, or 1h.");
+        writer.WriteLine("  - Candle outputs are written to <workDir>\\candle-data\\<exchange>\\<INSTRUMENT>\\<timeframe>\\yyyy-MM-dd.csv.");
         writer.WriteLine("  - --dates and -on accept one date or a comma-separated list using yyyy-MM-dd or yyyyMMdd.");
         writer.WriteLine("  - scan reports gaps without modifying files.");
         writer.WriteLine("  - heal scans the requested instrument scope and heals each bounded gap it finds.");
@@ -101,7 +103,7 @@ public static class CliCommand
             var token = enumerator.Current;
             if (!IsOptionToken(token))
             {
-                throw new ArgumentException($"Unexpected argument '{token}'. Options must use --workDir/-dir, --exchange/-x, or --dates/-on.");
+                throw new ArgumentException($"Unexpected argument '{token}'. Options must use -time/--timeFrame, --workDir/-dir, --exchange/-x, or --dates/-on.");
             }
 
             var optionName = NormalizeOptionName(token);
@@ -152,6 +154,23 @@ public static class CliCommand
         return value ?? defaultValue;
     }
 
+    private static string GetTimeframe(CliMode mode, Dictionary<string, string> options)
+    {
+        var result = string.Empty;
+
+        if (mode is CliMode.Candlize)
+        {
+            if (!options.TryGetValue("timeInterval", out var configuredTimeframe) || string.IsNullOrWhiteSpace(configuredTimeframe))
+            {
+                throw new ArgumentException("Time interval must be provided. Use -time 1m or --timeFrame 10s.");
+            }
+
+            result = configuredTimeframe;
+        }
+
+        return result;
+    }
+
     private static bool IsOptionToken(string value) => value.StartsWith('-');
 
     private static string NormalizeOptionName(string token)
@@ -170,6 +189,10 @@ public static class CliCommand
         {
             result = "dates";
         }
+        else if (token.Equals("--timeFrame", StringComparison.OrdinalIgnoreCase) || token.Equals("-time", StringComparison.OrdinalIgnoreCase))
+        {
+            result = "timeInterval";
+        }
         else if (token.Equals("--mode", StringComparison.OrdinalIgnoreCase)
             || token.Equals("--instrument", StringComparison.OrdinalIgnoreCase)
             || token.Equals("--source", StringComparison.OrdinalIgnoreCase)
@@ -181,7 +204,7 @@ public static class CliCommand
         }
         else
         {
-            throw new ArgumentException($"Unknown option '{token}'. Supported options are --workDir/-dir, --exchange/-x, and --dates/-on.");
+            throw new ArgumentException($"Unknown option '{token}'. Supported options are -time/--timeFrame, --workDir/-dir, --exchange/-x, and --dates/-on.");
         }
 
         return result;
