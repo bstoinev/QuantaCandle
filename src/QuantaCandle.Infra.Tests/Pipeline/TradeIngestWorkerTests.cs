@@ -463,7 +463,7 @@ public sealed class TradeIngestWorkerTests
     private static TradeInfo CreateTrade(string tradeId, Instrument instrument, DateTimeOffset timestamp)
     {
         var key = new TradeKey(new ExchangeId("Stub"), instrument, tradeId);
-        return new TradeInfo(key, timestamp, price: 1m, quantity: 1m);
+        return new TradeInfo(key, timestamp, price: 1m, quantity: 1m, buyerIsMaker: false);
     }
 
     private sealed class BlockingIngestionStateStore : IIngestionStateStore

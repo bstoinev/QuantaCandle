@@ -1,8 +1,14 @@
 namespace QuantaCandle.Core.Trading;
 
+/// <summary>
+/// Describes one normalized trade record used throughout ingestion and storage flows.
+/// </summary>
 public readonly record struct TradeInfo
 {
-    public TradeInfo(TradeKey key, DateTimeOffset timestamp, decimal price, decimal quantity)
+    /// <summary>
+    /// Initializes a normalized trade record.
+    /// </summary>
+    public TradeInfo(TradeKey key, DateTimeOffset timestamp, decimal price, decimal quantity, bool buyerIsMaker)
     {
         if (price <= 0)
         {
@@ -18,13 +24,31 @@ public readonly record struct TradeInfo
         Timestamp = timestamp;
         Price = price;
         Quantity = quantity;
+        BuyerIsMaker = buyerIsMaker;
     }
 
+    /// <summary>
+    /// Gets the normalized trade key.
+    /// </summary>
     public TradeKey Key { get; }
 
+    /// <summary>
+    /// Gets the trade timestamp.
+    /// </summary>
     public DateTimeOffset Timestamp { get; }
 
+    /// <summary>
+    /// Gets the executed trade price.
+    /// </summary>
     public decimal Price { get; }
 
+    /// <summary>
+    /// Gets the executed base-asset quantity.
+    /// </summary>
     public decimal Quantity { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the buyer side was the maker side.
+    /// </summary>
+    public bool BuyerIsMaker { get; }
 }

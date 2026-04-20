@@ -134,6 +134,6 @@ public sealed class TradeSinkFileSimpleTests
     {
         var key = new TradeKey(StubExchange, Instrument.Parse("BTC-USDT"), tradeId);
         var timestamp = new DateTimeOffset(utcDate.Year, utcDate.Month, utcDate.Day, 13, 37, 0, TimeSpan.Zero);
-        return new TradeInfo(key, timestamp, price: 10m, quantity: 0.5m);
+        return new TradeInfo(key, timestamp, price: 10m, quantity: 0.5m, buyerIsMaker: false);
     }
 }

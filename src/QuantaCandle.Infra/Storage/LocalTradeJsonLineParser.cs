@@ -25,6 +25,12 @@ internal static class LocalTradeJsonLineParser
             var timestamp = root.GetProperty("timestamp").GetDateTimeOffset().ToUniversalTime();
             var price = root.GetProperty("price").GetDecimal();
             var quantity = root.GetProperty("quantity").GetDecimal();
+            var buyerIsMaker = false;
+
+            if (root.TryGetProperty("isBuyerMaker", out var buyerIsMakerElement))
+            {
+                buyerIsMaker = buyerIsMakerElement.GetBoolean();
+            }
 
             if (string.IsNullOrWhiteSpace(exchangeText))
             {
@@ -56,7 +62,7 @@ internal static class LocalTradeJsonLineParser
                 Instrument.Parse(instrumentText.Trim().ToUpperInvariant()),
                 tradeId.Trim());
 
-            var result = new TradeInfo(key, timestamp, price, quantity);
+            var result = new TradeInfo(key, timestamp, price, quantity, buyerIsMaker);
             return result;
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or InvalidOperationException or JsonException or KeyNotFoundException)

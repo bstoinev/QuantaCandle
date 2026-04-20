@@ -702,7 +702,7 @@ public sealed class TradeScratchCheckpointLifecycleTests
     private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp, string instrumentText = "BTC-USDT")
     {
         var key = new TradeKey(StubExchange, Instrument.Parse(instrumentText), tradeId);
-        var result = new TradeInfo(key, timestamp, 1m, 1m);
+        var result = new TradeInfo(key, timestamp, 1m, 1m, buyerIsMaker: false);
         return result;
     }
 

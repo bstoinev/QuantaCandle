@@ -170,7 +170,8 @@ public sealed class TradeDayBoundaryResolverTests
             new TradeKey(new ExchangeId("Binance"), instrument, tradeId.ToString()),
             DateTimeOffset.Parse(timestampUtc, null, System.Globalization.DateTimeStyles.AdjustToUniversal),
             100.0m,
-            1.0m);
+            1.0m,
+            buyerIsMaker: false);
         return result;
     }
 

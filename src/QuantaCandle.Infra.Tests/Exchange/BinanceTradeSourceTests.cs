@@ -107,7 +107,7 @@ public sealed class BinanceTradeSourceTests
     private static TradeInfo CreateTrade(string tradeId)
     {
         var key = new TradeKey(new ExchangeId("Binance"), Instrument.Parse("BTC-USDT"), tradeId);
-        var result = new TradeInfo(key, new DateTimeOffset(2026, 3, 11, 12, 0, 0, TimeSpan.Zero), 50_000m, 0.001m);
+        var result = new TradeInfo(key, new DateTimeOffset(2026, 3, 11, 12, 0, 0, TimeSpan.Zero), 50_000m, 0.001m, buyerIsMaker: false);
         return result;
     }
 }

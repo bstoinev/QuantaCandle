@@ -182,7 +182,7 @@ public sealed class TradeCollectorHostedServiceTests
         public async IAsyncEnumerable<TradeInfo> GetLiveTrades(Instrument instrument, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             CollectionStarted.TrySetResult();
-            yield return new TradeInfo(new TradeKey(Exchange, instrument, "1"), new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero), 1m, 1m);
+            yield return new TradeInfo(new TradeKey(Exchange, instrument, "1"), new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero), 1m, 1m, buyerIsMaker: false);
 
             try
             {

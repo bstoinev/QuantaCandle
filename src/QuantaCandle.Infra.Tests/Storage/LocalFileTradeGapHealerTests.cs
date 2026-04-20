@@ -372,7 +372,8 @@ public sealed class LocalFileTradeGapHealerTests
                 new TradeKey(BinanceExchange, Instrument.Parse("BTC-USDT"), "103"),
                 CreateTimestamp(103),
                 999m,
-                1m);
+                1m,
+                buyerIsMaker: false);
 
             var healer = new LocalFileTradeGapHealer(
                 new RecordingTradeGapFetchClient([CreateTrade(101), CreateTrade(102), conflictingTrade]),
@@ -425,7 +426,8 @@ public sealed class LocalFileTradeGapHealerTests
                 new TradeKey(new ExchangeId("Other"), Instrument.Parse("BTC-USDT"), "101"),
                 CreateTimestamp(101),
                 201m,
-                1.01m);
+                1.01m,
+                buyerIsMaker: false);
             var healer = new LocalFileTradeGapHealer(new RecordingTradeGapFetchClient([invalidTrade]), CreateLog());
 
             await Assert.ThrowsAsync<InvalidOperationException>(
@@ -472,7 +474,8 @@ public sealed class LocalFileTradeGapHealerTests
             new TradeKey(BinanceExchange, Instrument.Parse("BTC-USDT"), tradeId.ToString()),
             CreateTimestamp(tradeId),
             100m + tradeId,
-            1m);
+            1m,
+            buyerIsMaker: false);
     }
 
     private static DateTimeOffset CreateTimestamp(long tradeId)
@@ -547,7 +550,7 @@ public sealed class LocalFileTradeGapHealerTests
         var price = root.GetProperty("price").GetDecimal();
         var quantity = root.GetProperty("quantity").GetDecimal();
 
-        return new TradeInfo(new TradeKey(exchange, instrument, tradeId), timestamp, price, quantity);
+        return new TradeInfo(new TradeKey(exchange, instrument, tradeId), timestamp, price, quantity, buyerIsMaker: false);
     }
 
     private static string FindProjectFile(string projectDirectoryName, string relativePath)

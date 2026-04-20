@@ -78,6 +78,25 @@ internal static class BinanceHelper
     }
 
     /// <summary>
+    /// Reads a required boolean property from a Binance payload object.
+    /// </summary>
+    public static bool GetRequiredBoolean(JsonElement payload, string propertyName, int index, string payloadName)
+    {
+        if (!payload.TryGetProperty(propertyName, out var property))
+        {
+            throw new InvalidOperationException($"Binance {payloadName} payload at index {index} is missing required property '{propertyName}'.");
+        }
+
+        if (property.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+        {
+            throw new InvalidOperationException($"Binance {payloadName} payload at index {index} has non-boolean '{propertyName}'.");
+        }
+
+        var result = property.GetBoolean();
+        return result;
+    }
+
+    /// <summary>
     /// Parses a normalized trade identifier as a 64-bit integer.
     /// </summary>
     public static long GetTradeId(TradeInfo trade)

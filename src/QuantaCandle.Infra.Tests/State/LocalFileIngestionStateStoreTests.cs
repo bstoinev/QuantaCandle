@@ -155,7 +155,7 @@ public sealed class LocalFileIngestionStateStoreTests
     private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp)
     {
         var key = new TradeKey(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), tradeId);
-        return new TradeInfo(key, timestamp, price: 1m, quantity: 1m);
+        return new TradeInfo(key, timestamp, price: 1m, quantity: 1m, buyerIsMaker: false);
     }
 
     private static Mock<IClock> CreateClockMoq(Func<DateTimeOffset> utcNowProvider)

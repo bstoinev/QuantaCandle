@@ -29,7 +29,7 @@ public sealed class TradeSourceStub(TradeSourceStubOptions options, IClock clock
             decimal price = options.StartPrice + (options.PriceStep * sequence);
 
             TradeKey key = new TradeKey(options.Exchange, symbol, tradeId);
-            yield return new TradeInfo(key, timestamp, price, options.Quantity);
+            yield return new TradeInfo(key, timestamp, price, options.Quantity, buyerIsMaker: false);
 
             sequence++;
             await Task.Delay(interval, cancellationToken).ConfigureAwait(false);

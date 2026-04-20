@@ -184,7 +184,7 @@ public sealed class BinanceTradeSource : ITradeSource
         var quantity = decimal.Parse(qtyRaw, NumberStyles.Float, CultureInfo.InvariantCulture);
         var key = new TradeKey(_binanceExchange, instrument, tradeId);
 
-        return new TradeInfo(key, timestamp, price, quantity);
+        return new TradeInfo(key, timestamp, price, quantity, dto.BuyerIsMaker);
     }
 
     private static async Task<string?> ReceiveTextMessageAsync(ClientWebSocket ws, byte[] buffer, CancellationToken cancellationToken)

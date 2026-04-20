@@ -48,13 +48,55 @@ public sealed class TradeJsonlFileTests
         Assert.Equal(4, reader.ReadLineCallCount);
     }
 
+    [Fact]
+    public async Task RoundtripPreservesIsBuyerMaker()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var rootDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.TradeJsonlFileTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(rootDirectory);
+
+        try
+        {
+            var path = Path.Combine(rootDirectory, "BTC-USDT", "2026-03-12.jsonl");
+            var expectedTrades = new[]
+            {
+                new TradeInfo(
+                    new TradeKey(new ExchangeId("Binance"), Instrument.Parse("BTC-USDT"), "101"),
+                    new DateTimeOffset(2026, 3, 12, 9, 30, 0, TimeSpan.Zero),
+                    100m,
+                    1m,
+                    buyerIsMaker: true),
+                new TradeInfo(
+                    new TradeKey(new ExchangeId("Binance"), Instrument.Parse("BTC-USDT"), "102"),
+                    new DateTimeOffset(2026, 3, 12, 9, 31, 0, TimeSpan.Zero),
+                    101m,
+                    2m,
+                    buyerIsMaker: false),
+            };
+
+            await TradeJsonlFile.WriteFullPayload(path, TradeJsonlFile.BuildPayload(expectedTrades), cancellationToken);
+
+            var actualTrades = await TradeJsonlFile.ReadTrades(path, cancellationToken);
+
+            Assert.Equal(expectedTrades, actualTrades);
+        }
+        finally
+        {
+            if (Directory.Exists(rootDirectory))
+            {
+                Directory.Delete(rootDirectory, true);
+            }
+        }
+    }
+
     private static string SerializeTrade(string tradeId, DateTimeOffset timestamp)
     {
         var trade = new TradeInfo(
             new TradeKey(new ExchangeId("Stub"), Instrument.Parse("BTC-USDT"), tradeId),
             timestamp,
             price: 1m,
-            quantity: 1m);
+            quantity: 1m,
+            buyerIsMaker: false);
         var result = TradeJsonlFile.BuildPayload([trade]).TrimEnd();
         return result;
     }

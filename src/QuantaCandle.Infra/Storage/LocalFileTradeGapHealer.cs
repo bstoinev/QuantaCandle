@@ -258,7 +258,8 @@ public sealed class LocalFileTradeGapHealer : ITradeGapHealer
             new TradeKey(request.Exchange, request.Symbol, tradeId.ToString(CultureInfo.InvariantCulture)),
             fetchedTrade.Timestamp.ToUniversalTime(),
             fetchedTrade.Price,
-            fetchedTrade.Quantity);
+            fetchedTrade.Quantity,
+            fetchedTrade.BuyerIsMaker);
         return result;
     }
 
@@ -274,6 +275,9 @@ public sealed class LocalFileTradeGapHealer : ITradeGapHealer
             var timestamp = root.GetProperty("timestamp").GetDateTimeOffset().ToUniversalTime();
             var price = root.GetProperty("price").GetDecimal();
             var quantity = root.GetProperty("quantity").GetDecimal();
+            var buyerIsMaker = root.TryGetProperty("isBuyerMaker", out var buyerIsMakerElement)
+                ? buyerIsMakerElement.GetBoolean()
+                : false;
 
             if (!exchangeText.Equals(request.Exchange.Value, StringComparison.OrdinalIgnoreCase))
             {
@@ -294,7 +298,7 @@ public sealed class LocalFileTradeGapHealer : ITradeGapHealer
                 tradeId,
                 FormattableString.Invariant($"TradeId '{tradeId}' at line {lineNumber} in '{fullPath}' is not numeric."));
             var normalizedTradeId = numericTradeId.ToString(CultureInfo.InvariantCulture);
-            var result = new TradeInfo(new TradeKey(request.Exchange, request.Symbol, normalizedTradeId), timestamp, price, quantity);
+            var result = new TradeInfo(new TradeKey(request.Exchange, request.Symbol, normalizedTradeId), timestamp, price, quantity, buyerIsMaker);
             return result;
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or InvalidOperationException or JsonException or KeyNotFoundException)

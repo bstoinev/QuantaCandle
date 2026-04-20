@@ -156,7 +156,7 @@ public sealed class TradeFinalizedFileStartupDispatcherTests
     private static TradeInfo CreateTrade(string tradeId, Instrument instrument, DateTimeOffset timestamp)
     {
         var key = new TradeKey(StubExchange, instrument, tradeId);
-        var result = new TradeInfo(key, timestamp, 1m, 1m);
+        var result = new TradeInfo(key, timestamp, 1m, 1m, buyerIsMaker: false);
         return result;
     }
 

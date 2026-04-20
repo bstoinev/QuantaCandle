@@ -132,7 +132,8 @@ public sealed class BinanceTradeGapFetchClient(HttpClient httpClient) : ITradeGa
             var quantity = BinanceHelper.GetRequiredDecimal(item, "qty", index, "trade");
             var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timestampUnixMilliseconds);
             var tradeKey = new TradeKey(BinanceHelper.Signature, instrument, tradeId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            var trade = new TradeInfo(tradeKey, timestamp, price, quantity);
+            var buyerIsMaker = BinanceHelper.GetRequiredBoolean(item, "isBuyerMaker", index, "trade");
+            var trade = new TradeInfo(tradeKey, timestamp, price, quantity, buyerIsMaker);
             result.Add(trade);
             index++;
         }

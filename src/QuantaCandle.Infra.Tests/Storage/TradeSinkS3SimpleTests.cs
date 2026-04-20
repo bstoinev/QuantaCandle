@@ -347,7 +347,7 @@ public sealed class TradeSinkS3SimpleTests
     private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp, decimal price)
     {
         var key = new TradeKey(StubExchange, Instrument.Parse("BTC-USDT"), tradeId);
-        return new TradeInfo(key, timestamp, price, quantity: 0.5m);
+        return new TradeInfo(key, timestamp, price, quantity: 0.5m, buyerIsMaker: false);
     }
 
     private static async Task WriteTradeFileAsync(string path, IReadOnlyList<TradeInfo> trades)
