@@ -49,7 +49,7 @@ public sealed class ExecutableFlowValidationTests
             var lines = await File.ReadAllLinesAsync(firstFile, CancellationToken.None);
 
             Assert.NotEmpty(lines);
-            Assert.Equal("OpenTimeUtc,Instrument,Open,High,Low,Close,BaseVolume,QuoteVolume,TradeCount", lines[0]);
+            Assert.Equal("OpenTimeUtc,Instrument,Open,High,Low,Close,BaseVolume,QuoteVolume,BuyQuoteVolume,SellQuoteVolume,TradeCount", lines[0]);
             Assert.True(lines.Length >= 2);
         }
         finally

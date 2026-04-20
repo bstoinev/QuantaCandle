@@ -109,6 +109,8 @@ public sealed class TradeToCandleGenerator
                 close = candle.Close,
                 baseVolume = candle.BaseVolume,
                 quoteVolume = candle.QuoteVolume,
+                buyQuoteVolume = candle.BuyQuoteVolume,
+                sellQuoteVolume = candle.SellQuoteVolume,
                 tradeCount = candle.TradeCount,
             });
         }
@@ -119,7 +121,7 @@ public sealed class TradeToCandleGenerator
     private static string[] BuildCsvLines(IReadOnlyList<CandleRow> candles)
     {
         var result = new string[candles.Count + 1];
-        result[0] = "OpenTimeUtc,Instrument,Open,High,Low,Close,BaseVolume,QuoteVolume,TradeCount";
+        result[0] = "OpenTimeUtc,Instrument,Open,High,Low,Close,BaseVolume,QuoteVolume,BuyQuoteVolume,SellQuoteVolume,TradeCount";
 
         for (var i = 0; i < candles.Count; i++)
         {
@@ -131,9 +133,11 @@ public sealed class TradeToCandleGenerator
             var close = candle.Close?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
             var baseVolume = candle.BaseVolume.ToString(CultureInfo.InvariantCulture);
             var quoteVolume = candle.QuoteVolume.ToString(CultureInfo.InvariantCulture);
+            var buyQuoteVolume = candle.BuyQuoteVolume.ToString(CultureInfo.InvariantCulture);
+            var sellQuoteVolume = candle.SellQuoteVolume.ToString(CultureInfo.InvariantCulture);
             var tradeCount = candle.TradeCount.ToString(CultureInfo.InvariantCulture);
 
-            result[i + 1] = $"{openTimeUtc},{candle.Instrument},{open},{high},{low},{close},{baseVolume},{quoteVolume},{tradeCount}";
+            result[i + 1] = $"{openTimeUtc},{candle.Instrument},{open},{high},{low},{close},{baseVolume},{quoteVolume},{buyQuoteVolume},{sellQuoteVolume},{tradeCount}";
         }
 
         return result;
@@ -356,6 +360,9 @@ public sealed class TradeToCandleGenerator
             var timestamp = root.GetProperty("timestamp").GetDateTimeOffset().ToUniversalTime();
             var price = root.GetProperty("price").GetDecimal();
             var quantity = root.GetProperty("quantity").GetDecimal();
+            var buyerIsMaker = root.TryGetProperty("isBuyerMaker", out var buyerIsMakerElement)
+                ? buyerIsMakerElement.GetBoolean()
+                : false;
 
             if (string.IsNullOrWhiteSpace(exchange))
             {
@@ -382,7 +389,7 @@ public sealed class TradeToCandleGenerator
                 throw new InvalidOperationException("Quantity must be positive.");
             }
 
-            var result = new TradeRow(exchange.Trim().ToLowerInvariant(), instrument.Trim().ToUpperInvariant(), tradeId.Trim(), timestamp, price, quantity);
+            var result = new TradeRow(exchange.Trim().ToLowerInvariant(), instrument.Trim().ToUpperInvariant(), tradeId.Trim(), timestamp, price, quantity, buyerIsMaker);
             return result;
         }
         catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or JsonException or FormatException)
@@ -504,6 +511,8 @@ public sealed class TradeToCandleGenerator
                 Close: null,
                 BaseVolume: 0m,
                 QuoteVolume: 0m,
+                BuyQuoteVolume: 0m,
+                SellQuoteVolume: 0m,
                 TradeCount: 0);
         }
         else
@@ -514,6 +523,8 @@ public sealed class TradeToCandleGenerator
             var low = open;
             var baseVolume = 0m;
             var quoteVolume = 0m;
+            var buyQuoteVolume = 0m;
+            var sellQuoteVolume = 0m;
 
             for (var i = startInclusive; i < endExclusive; i++)
             {
@@ -528,8 +539,18 @@ public sealed class TradeToCandleGenerator
                     low = trade.Price;
                 }
 
+                var quoteVolumeContribution = trade.Price * trade.Quantity;
                 baseVolume += trade.Quantity;
-                quoteVolume += trade.Price * trade.Quantity;
+                quoteVolume += quoteVolumeContribution;
+
+                if (trade.BuyerIsMaker)
+                {
+                    sellQuoteVolume += quoteVolumeContribution;
+                }
+                else
+                {
+                    buyQuoteVolume += quoteVolumeContribution;
+                }
             }
 
             result = new CandleRow(
@@ -543,6 +564,8 @@ public sealed class TradeToCandleGenerator
                 close,
                 baseVolume,
                 quoteVolume,
+                buyQuoteVolume,
+                sellQuoteVolume,
                 endExclusive - startInclusive);
         }
 
@@ -572,7 +595,8 @@ public sealed class TradeToCandleGenerator
         string TradeId,
         DateTimeOffset TimestampUtc,
         decimal Price,
-        decimal Quantity);
+        decimal Quantity,
+        bool BuyerIsMaker);
 
     /// <summary>
     /// Represents one generated candle row.
@@ -588,6 +612,8 @@ public sealed class TradeToCandleGenerator
         decimal? Close,
         decimal BaseVolume,
         decimal QuoteVolume,
+        decimal BuyQuoteVolume,
+        decimal SellQuoteVolume,
         int TradeCount);
 
     /// <summary>

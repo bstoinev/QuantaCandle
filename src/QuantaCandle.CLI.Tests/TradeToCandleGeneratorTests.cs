@@ -38,7 +38,9 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal("Close", rows[0][5]);
             Assert.Equal("BaseVolume", rows[0][6]);
             Assert.Equal("QuoteVolume", rows[0][7]);
-            Assert.Equal("TradeCount", rows[0][8]);
+            Assert.Equal("BuyQuoteVolume", rows[0][8]);
+            Assert.Equal("SellQuoteVolume", rows[0][9]);
+            Assert.Equal("TradeCount", rows[0][10]);
             Assert.Equal(DateTimeOffset.Parse("2026-03-12T12:00:00Z"), DateTimeOffset.Parse(rows[1][0], CultureInfo.InvariantCulture));
             Assert.Equal("BTC-USDT", rows[1][1]);
             Assert.Equal("100", rows[1][2]);
@@ -47,7 +49,9 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal("101", rows[1][5]);
             Assert.Equal("0.3", rows[1][6]);
             Assert.Equal("30.2", rows[1][7]);
-            Assert.Equal("2", rows[1][8]);
+            Assert.Equal("30.2", rows[1][8]);
+            Assert.Equal("0", rows[1][9]);
+            Assert.Equal("2", rows[1][10]);
         }
         finally
         {
@@ -103,6 +107,8 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal(101m, candles[0].GetProperty("close").GetDecimal());
             Assert.Equal(0.3m, candles[0].GetProperty("baseVolume").GetDecimal());
             Assert.Equal(30.2m, candles[0].GetProperty("quoteVolume").GetDecimal());
+            Assert.Equal(30.2m, candles[0].GetProperty("buyQuoteVolume").GetDecimal());
+            Assert.Equal(0m, candles[0].GetProperty("sellQuoteVolume").GetDecimal());
         }
         finally
         {
@@ -138,6 +144,8 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal("0", gap[6]);
             Assert.Equal("0", gap[7]);
             Assert.Equal("0", gap[8]);
+            Assert.Equal("0", gap[9]);
+            Assert.Equal("0", gap[10]);
         }
         finally
         {
@@ -199,7 +207,9 @@ public sealed class TradeToCandleGeneratorTests
 
             Assert.Equal("0.7", rows[1][6]);
             Assert.Equal("69.8", rows[1][7]);
-            Assert.Equal("3", rows[1][8]);
+            Assert.Equal("69.8", rows[1][8]);
+            Assert.Equal("0", rows[1][9]);
+            Assert.Equal("3", rows[1][10]);
         }
         finally
         {
@@ -229,7 +239,9 @@ public sealed class TradeToCandleGeneratorTests
             var rows = await ReadCsvRowsAsync(csvPath);
             Assert.Equal("0.75", rows[1][6]);
             Assert.Equal("75.25", rows[1][7]);
-            Assert.Equal("2", rows[1][8]);
+            Assert.Equal("75.25", rows[1][8]);
+            Assert.Equal("0", rows[1][9]);
+            Assert.Equal("2", rows[1][10]);
         }
         finally
         {
@@ -422,6 +434,117 @@ public sealed class TradeToCandleGeneratorTests
         }
     }
 
+    [Fact]
+    public async Task AggregatesMixedMakerDirectionsIntoSplitQuoteVolumes()
+    {
+        var root = CreateTempRoot();
+
+        try
+        {
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-03-12.jsonl",
+                Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m, buyerIsMaker: false),
+                Trade("binance", "BTC-USDT", "2", "2026-03-12T12:00:20Z", 101m, 0.2m, buyerIsMaker: true),
+                Trade("binance", "BTC-USDT", "3", "2026-03-12T12:00:45Z", 99m, 0.4m, buyerIsMaker: false));
+
+            await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
+            await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "jsonl"), CancellationToken.None);
+
+            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvRows = await ReadCsvRowsAsync(csvPath);
+            Assert.Equal("69.8", csvRows[1][7]);
+            Assert.Equal("49.6", csvRows[1][8]);
+            Assert.Equal("20.2", csvRows[1][9]);
+            Assert.Equal("3", csvRows[1][10]);
+
+            var jsonlPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.jsonl");
+            var candles = await ReadJsonlFileAsync(jsonlPath);
+            Assert.Single(candles);
+            Assert.Equal(69.8m, candles[0].GetProperty("quoteVolume").GetDecimal());
+            Assert.Equal(49.6m, candles[0].GetProperty("buyQuoteVolume").GetDecimal());
+            Assert.Equal(20.2m, candles[0].GetProperty("sellQuoteVolume").GetDecimal());
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task AggregatesAllBuyBucketIntoBuyQuoteVolumeOnly()
+    {
+        var root = CreateTempRoot();
+
+        try
+        {
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-03-12.jsonl",
+                Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.5m, buyerIsMaker: false),
+                Trade("binance", "BTC-USDT", "2", "2026-03-12T12:00:20Z", 101m, 0.25m, buyerIsMaker: false));
+
+            await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
+
+            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var rows = await ReadCsvRowsAsync(csvPath);
+            Assert.Equal("75.25", rows[1][7]);
+            Assert.Equal("75.25", rows[1][8]);
+            Assert.Equal("0", rows[1][9]);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task AggregatesAllSellBucketIntoSellQuoteVolumeOnly()
+    {
+        var root = CreateTempRoot();
+
+        try
+        {
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-03-12.jsonl",
+                Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m, buyerIsMaker: true),
+                Trade("binance", "BTC-USDT", "2", "2026-03-12T12:00:20Z", 101m, 0.2m, buyerIsMaker: true));
+
+            await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
+
+            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var rows = await ReadCsvRowsAsync(csvPath);
+            Assert.Equal("30.2", rows[1][7]);
+            Assert.Equal("0", rows[1][8]);
+            Assert.Equal("30.2", rows[1][9]);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task MissingIsBuyerMakerDefaultsToBuyQuoteVolumeForLegacyJsonlInput()
+    {
+        var root = CreateTempRoot();
+
+        try
+        {
+            await WriteLegacyTradeFileAsync(root, "binance", "BTC-USDT", "2026-03-12.jsonl",
+                LegacyTrade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m),
+                LegacyTrade("binance", "BTC-USDT", "2", "2026-03-12T12:00:20Z", 101m, 0.2m));
+
+            await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "jsonl"), CancellationToken.None);
+
+            var jsonlPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.jsonl");
+            var candles = await ReadJsonlFileAsync(jsonlPath);
+            Assert.Single(candles);
+            Assert.Equal(30.2m, candles[0].GetProperty("quoteVolume").GetDecimal());
+            Assert.Equal(30.2m, candles[0].GetProperty("buyQuoteVolume").GetDecimal());
+            Assert.Equal(0m, candles[0].GetProperty("sellQuoteVolume").GetDecimal());
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
     private static string CreateTempRoot()
     {
         var result = Path.Combine(Path.GetTempPath(), "QuantaCandle.Infra.Tests", Guid.NewGuid().ToString("N"));
@@ -437,7 +560,22 @@ public sealed class TradeToCandleGeneratorTests
         }
     }
 
-    private static object Trade(string exchange, string instrument, string tradeId, string timestamp, decimal price, decimal quantity)
+    private static object Trade(string exchange, string instrument, string tradeId, string timestamp, decimal price, decimal quantity, bool buyerIsMaker = false)
+    {
+        var result = new
+        {
+            exchange,
+            instrument,
+            tradeId,
+            timestamp = DateTimeOffset.Parse(timestamp, CultureInfo.InvariantCulture),
+            price,
+            quantity,
+            isBuyerMaker = buyerIsMaker,
+        };
+        return result;
+    }
+
+    private static object LegacyTrade(string exchange, string instrument, string tradeId, string timestamp, decimal price, decimal quantity)
     {
         var result = new
         {
@@ -460,6 +598,11 @@ public sealed class TradeToCandleGeneratorTests
         var lines = trades.Select(static trade => JsonSerializer.Serialize(trade)).ToArray();
         var payload = string.Join(Environment.NewLine, lines) + Environment.NewLine;
         await File.WriteAllTextAsync(path, payload, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private static async Task WriteLegacyTradeFileAsync(string workDirectory, string exchange, string instrument, string fileName, params object[] trades)
+    {
+        await WriteTradeFileAsync(workDirectory, exchange, instrument, fileName, trades);
     }
 
     private static async Task<string[][]> ReadCsvRowsAsync(string path)
