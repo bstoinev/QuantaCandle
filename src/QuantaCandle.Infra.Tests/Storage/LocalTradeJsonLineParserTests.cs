@@ -22,14 +22,14 @@ public sealed class LocalTradeJsonLineParserTests
     }
 
     [Fact]
-    public void ParseTradeDefaultsIsBuyerMakerToFalseWhenMissing()
+    public void ParseTradeThrowsWhenIsBuyerMakerIsMissing()
     {
         var line = """
             {"exchange":"Binance","instrument":"BTC-USDT","tradeId":"101","timestamp":"2026-03-12T09:30:00+00:00","price":100.0,"quantity":1.0}
             """;
 
-        var result = LocalTradeJsonLineParser.ParseTrade(line, "BTC-USDT\\2026-03-12.jsonl", 1);
+        var exception = Assert.Throws<InvalidOperationException>(() => LocalTradeJsonLineParser.ParseTrade(line, "BTC-USDT\\2026-03-12.jsonl", 1));
 
-        Assert.False(result.BuyerIsMaker);
+        Assert.Contains("Failed to parse trade", exception.Message, StringComparison.Ordinal);
     }
 }

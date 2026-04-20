@@ -25,12 +25,7 @@ internal static class LocalTradeJsonLineParser
             var timestamp = root.GetProperty("timestamp").GetDateTimeOffset().ToUniversalTime();
             var price = root.GetProperty("price").GetDecimal();
             var quantity = root.GetProperty("quantity").GetDecimal();
-            var buyerIsMaker = false;
-
-            if (root.TryGetProperty("isBuyerMaker", out var buyerIsMakerElement))
-            {
-                buyerIsMaker = buyerIsMakerElement.GetBoolean();
-            }
+            var buyerIsMaker = root.GetProperty("isBuyerMaker").GetBoolean();
 
             if (string.IsNullOrWhiteSpace(exchangeText))
             {

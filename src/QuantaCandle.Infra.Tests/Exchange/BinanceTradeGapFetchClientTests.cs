@@ -21,9 +21,9 @@ public sealed class BinanceTradeGapFetchClientTests
         using var httpClient = CreateHttpClient(
             """
             [
-              { "id": 100, "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "BTCUSDT", "exchange": "Binance" },
-              { "id": 101, "price": "100.20", "qty": "0.60", "time": 1710000001000, "symbol": "BTCUSDT", "exchange": "Binance" },
-              { "id": 102, "price": "100.30", "qty": "0.70", "time": 1710000002000, "symbol": "BTCUSDT", "exchange": "Binance" }
+              { "id": 100, "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "BTCUSDT", "exchange": "Binance", "isBuyerMaker": false },
+              { "id": 101, "price": "100.20", "qty": "0.60", "time": 1710000001000, "symbol": "BTCUSDT", "exchange": "Binance", "isBuyerMaker": true },
+              { "id": 102, "price": "100.30", "qty": "0.70", "time": 1710000002000, "symbol": "BTCUSDT", "exchange": "Binance", "isBuyerMaker": false }
             ]
             """);
 
@@ -57,7 +57,7 @@ public sealed class BinanceTradeGapFetchClientTests
         using var httpClient = CreateHttpClient(
             """
             [
-              { "id": "not-numeric", "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "BTCUSDT", "exchange": "Binance" }
+              { "id": "not-numeric", "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "BTCUSDT", "exchange": "Binance", "isBuyerMaker": false }
             ]
             """);
 
@@ -75,7 +75,7 @@ public sealed class BinanceTradeGapFetchClientTests
         using var httpClient = CreateHttpClient(
             """
             [
-              { "id": 103, "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "BTCUSDT", "exchange": "Binance" }
+              { "id": 103, "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "BTCUSDT", "exchange": "Binance", "isBuyerMaker": false }
             ]
             """);
 
@@ -93,7 +93,7 @@ public sealed class BinanceTradeGapFetchClientTests
         using var httpClient = CreateHttpClient(
             """
             [
-              { "id": 100, "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "ETHUSDT", "exchange": "Binance" }
+              { "id": 100, "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "ETHUSDT", "exchange": "Binance", "isBuyerMaker": false }
             ]
             """);
 
@@ -111,9 +111,9 @@ public sealed class BinanceTradeGapFetchClientTests
         using var httpClient = CreateHttpClient(
             """
             [
-              { "id": 102, "price": "100.30", "qty": "0.70", "time": 1710000002000, "symbol": "BTCUSDT", "exchange": "Binance" },
-              { "id": 100, "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "BTCUSDT", "exchange": "Binance" },
-              { "id": 101, "price": "100.20", "qty": "0.60", "time": 1710000001000, "symbol": "BTCUSDT", "exchange": "Binance" }
+              { "id": 102, "price": "100.30", "qty": "0.70", "time": 1710000002000, "symbol": "BTCUSDT", "exchange": "Binance", "isBuyerMaker": false },
+              { "id": 100, "price": "100.10", "qty": "0.50", "time": 1710000000000, "symbol": "BTCUSDT", "exchange": "Binance", "isBuyerMaker": true },
+              { "id": 101, "price": "100.20", "qty": "0.60", "time": 1710000001000, "symbol": "BTCUSDT", "exchange": "Binance", "isBuyerMaker": false }
             ]
             """);
 

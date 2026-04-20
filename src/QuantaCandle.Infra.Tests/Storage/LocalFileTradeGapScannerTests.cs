@@ -186,6 +186,7 @@ public sealed class LocalFileTradeGapScannerTests
             timestamp = DateTimeOffset.Parse(timestamp, CultureInfo.InvariantCulture),
             price = 100m,
             quantity = 1m,
+            isBuyerMaker = false,
         };
         return result;
     }

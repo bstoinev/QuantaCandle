@@ -68,7 +68,7 @@ public static class TradeJsonlFile
             var timestamp = root.GetProperty("timestamp").GetDateTimeOffset();
             var price = root.GetProperty("price").GetDecimal();
             var quantity = root.GetProperty("quantity").GetDecimal();
-            var buyerIsMaker = TryReadBuyerIsMaker(root);
+            var buyerIsMaker = root.GetProperty("isBuyerMaker").GetBoolean();
 
             var key = new TradeKey(exchange, instrument, tradeId);
             result.Add(new TradeInfo(key, timestamp, price, quantity, buyerIsMaker));
@@ -280,7 +280,7 @@ public static class TradeJsonlFile
             var timestamp = root.GetProperty("timestamp").GetDateTimeOffset();
             var price = root.GetProperty("price").GetDecimal();
             var quantity = root.GetProperty("quantity").GetDecimal();
-            var buyerIsMaker = TryReadBuyerIsMaker(root);
+            var buyerIsMaker = root.GetProperty("isBuyerMaker").GetBoolean();
             var key = new TradeKey(exchange, instrument, tradeId);
             var lastRecordedTrade = new TradeInfo(key, timestamp, price, quantity, buyerIsMaker);
             var activeScratchUtcDate = DateOnly.FromDateTime(timestamp.UtcDateTime);
@@ -305,18 +305,6 @@ public static class TradeJsonlFile
         };
 
         var result = JsonSerializer.Serialize(record);
-        return result;
-    }
-
-    private static bool TryReadBuyerIsMaker(JsonElement root)
-    {
-        var result = false;
-
-        if (root.TryGetProperty("isBuyerMaker", out var buyerIsMakerElement))
-        {
-            result = buyerIsMakerElement.GetBoolean();
-        }
-
         return result;
     }
 

@@ -275,9 +275,7 @@ public sealed class LocalFileTradeGapHealer : ITradeGapHealer
             var timestamp = root.GetProperty("timestamp").GetDateTimeOffset().ToUniversalTime();
             var price = root.GetProperty("price").GetDecimal();
             var quantity = root.GetProperty("quantity").GetDecimal();
-            var buyerIsMaker = root.TryGetProperty("isBuyerMaker", out var buyerIsMakerElement)
-                ? buyerIsMakerElement.GetBoolean()
-                : false;
+            var buyerIsMaker = root.GetProperty("isBuyerMaker").GetBoolean();
 
             if (!exchangeText.Equals(request.Exchange.Value, StringComparison.OrdinalIgnoreCase))
             {

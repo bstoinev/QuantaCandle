@@ -25,7 +25,7 @@ public sealed class BinanceRawTradeLookupClientTests
             _ =>
                 """
                 [
-                  { "id": 200, "price": "100.10", "qty": "0.50", "time": 1775779200001 }
+                  { "id": 200, "price": "100.10", "qty": "0.50", "time": 1775779200001, "isBuyerMaker": false }
                 ]
                 """);
         var client = new BinanceRawTradeLookupClient(httpClient, CreateLog());
@@ -54,7 +54,7 @@ public sealed class BinanceRawTradeLookupClientTests
                 """
                 : """
                 [
-                  { "id": 200, "price": "100.10", "qty": "0.50", "time": 1775779200001 }
+                  { "id": 200, "price": "100.10", "qty": "0.50", "time": 1775779200001, "isBuyerMaker": false }
                 ]
                 """);
         var client = new BinanceRawTradeLookupClient(httpClient, CreateLog());

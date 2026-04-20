@@ -520,7 +520,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task MissingIsBuyerMakerDefaultsToBuyQuoteVolumeForLegacyJsonlInput()
+    public async Task MissingIsBuyerMakerFailsForTradeJsonlInput()
     {
         var root = CreateTempRoot();
 
@@ -530,14 +530,11 @@ public sealed class TradeToCandleGeneratorTests
                 LegacyTrade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m),
                 LegacyTrade("binance", "BTC-USDT", "2", "2026-03-12T12:00:20Z", 101m, 0.2m));
 
-            await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "jsonl"), CancellationToken.None);
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => TradeToCandleGenerator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "jsonl"),
+                CancellationToken.None));
 
-            var jsonlPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.jsonl");
-            var candles = await ReadJsonlFileAsync(jsonlPath);
-            Assert.Single(candles);
-            Assert.Equal(30.2m, candles[0].GetProperty("quoteVolume").GetDecimal());
-            Assert.Equal(30.2m, candles[0].GetProperty("buyQuoteVolume").GetDecimal());
-            Assert.Equal(0m, candles[0].GetProperty("sellQuoteVolume").GetDecimal());
+            Assert.Contains("Failed to parse trade", exception.Message, StringComparison.Ordinal);
         }
         finally
         {

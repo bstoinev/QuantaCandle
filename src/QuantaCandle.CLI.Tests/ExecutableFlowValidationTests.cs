@@ -151,6 +151,7 @@ public sealed class ExecutableFlowValidationTests
                 var timestamp = root.GetProperty("timestamp").GetDateTimeOffset();
                 var price = root.GetProperty("price").GetDecimal();
                 var quantity = root.GetProperty("quantity").GetDecimal();
+                var buyerIsMaker = root.GetProperty("isBuyerMaker").GetBoolean();
 
                 var rewritten = JsonSerializer.Serialize(new
                 {
@@ -160,6 +161,7 @@ public sealed class ExecutableFlowValidationTests
                     timestamp,
                     price,
                     quantity,
+                    isBuyerMaker = buyerIsMaker,
                 });
 
                 rewrittenLines.Add(rewritten);

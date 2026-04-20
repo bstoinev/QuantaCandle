@@ -1307,6 +1307,7 @@ public sealed class QuantaCandleRunnerTests
             timestamp = DateTimeOffset.Parse(timestamp, CultureInfo.InvariantCulture),
             price,
             quantity,
+            isBuyerMaker = false,
         };
 
         return result;
