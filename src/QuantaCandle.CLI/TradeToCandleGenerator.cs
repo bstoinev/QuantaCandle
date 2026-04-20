@@ -11,6 +11,14 @@ public sealed class TradeToCandleGenerator
     private const string InvalidTimeIntervalMessage = "Invalid time interval '{0}'. Expected format like 1s, 10s, 1m, 5m, 1h.";
 
     /// <summary>
+    /// Describes the finalized candlize input scope together with the inclusive UTC date bounds used for output naming.
+    /// </summary>
+    private sealed record ResolvedCandlizeScope(
+        IReadOnlyList<string> InputFiles,
+        DateOnly? BeginDateUtc,
+        DateOnly? EndDateUtc);
+
+    /// <summary>
     /// Generates candles for the requested exchange, instrument, and optional date scope.
     /// </summary>
     public static async Task<CliResult> Run(
@@ -28,14 +36,14 @@ public sealed class TradeToCandleGenerator
         var tradeRootDirectory = GetTradeRootDirectory(workDirectory);
         var outputRootDirectory = GetOutputRootDirectory(workDirectory, exchange, timeframe);
         EnsureTradeInputDirectoryExists(tradeRootDirectory, exchange, instrument);
-        var inputFiles = ResolveInputFiles(tradeRootDirectory, exchange, instrument, options.Dates);
+        var resolvedScope = ResolveInputScope(tradeRootDirectory, exchange, instrument, options);
 
         if (PathsEqual(tradeRootDirectory, outputRootDirectory))
         {
             throw new ArgumentException("Input and output directories must be different.");
         }
 
-        var trades = await LoadTradesAsync(inputFiles, exchange, instrument, fileProgressReporter, cancellationToken).ConfigureAwait(false);
+        var trades = await LoadTradesAsync(resolvedScope.InputFiles, exchange, instrument, fileProgressReporter, cancellationToken).ConfigureAwait(false);
         trades.Sort(TradeRowComparer.Instance);
 
         var inputTradeCount = trades.Count;
@@ -52,7 +60,7 @@ public sealed class TradeToCandleGenerator
             return emptyResult;
         }
 
-        var candlesByPath = BuildCandlesByOutputPath(uniqueTrades, exchange, timeframe, interval, format, outputRootDirectory);
+        var candlesByPath = BuildCandlesByOutputPath(uniqueTrades, exchange, timeframe, interval, format, outputRootDirectory, resolvedScope);
         var outputPaths = candlesByPath.Keys.OrderBy(static path => path, StringComparer.Ordinal).ToArray();
         var candleCount = 0;
 
@@ -143,19 +151,24 @@ public sealed class TradeToCandleGenerator
         return result;
     }
 
-    private static List<string> ResolveInputFiles(string tradeRootDirectory, string exchange, string instrument, IReadOnlyList<DateOnly> dates)
+    /// <summary>
+    /// Resolves candlize input files from either explicit dates or an inclusive begin/end UTC date range.
+    /// </summary>
+    private static ResolvedCandlizeScope ResolveInputScope(string tradeRootDirectory, string exchange, string instrument, CliOptions options)
     {
         var result = new List<string>();
+        DateOnly? beginDateUtc = null;
+        DateOnly? endDateUtc = null;
         var instrumentDirectory = Path.Combine(tradeRootDirectory, exchange, instrument);
 
         if (!Directory.Exists(instrumentDirectory))
         {
-            return result;
+            return new ResolvedCandlizeScope(result, beginDateUtc, endDateUtc);
         }
 
-        if (dates.Count > 0)
+        if (options.Dates.Count > 0)
         {
-            foreach (var date in dates.OrderBy(static value => value))
+            foreach (var date in options.Dates.OrderBy(static value => value))
             {
                 var path = Path.Combine(instrumentDirectory, date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".jsonl");
                 if (File.Exists(path))
@@ -163,13 +176,37 @@ public sealed class TradeToCandleGenerator
                     result.Add(path);
                 }
             }
+
+            var resolvedDates = result
+                .Select(GetUtcDateFromPath)
+                .OrderBy(static value => value)
+                .ToArray();
+
+            if (resolvedDates.Length > 0)
+            {
+                beginDateUtc = resolvedDates[0];
+                endDateUtc = resolvedDates[^1];
+            }
+            else if (options.Dates.Count > 0)
+            {
+                beginDateUtc = options.Dates.Min();
+                endDateUtc = options.Dates.Max();
+            }
         }
         else
         {
-            result.AddRange(Directory.EnumerateFiles(instrumentDirectory, "*.jsonl", SearchOption.TopDirectoryOnly).OrderBy(static path => path, StringComparer.Ordinal));
+            var resolvedRange = CandlizeDateRangeResolver.Resolve(
+                tradeRootDirectory,
+                exchange,
+                instrument,
+                options.BeginDateUtc,
+                options.EndDateUtc);
+            result.AddRange(resolvedRange.FilesInRange.Select(static file => file.Path));
+            beginDateUtc = resolvedRange.BeginDateUtc;
+            endDateUtc = resolvedRange.EndDateUtc;
         }
 
-        return result;
+        return new ResolvedCandlizeScope(result, beginDateUtc, endDateUtc);
     }
 
     private static bool PathsEqual(string left, string right)
@@ -424,10 +461,14 @@ public sealed class TradeToCandleGenerator
         string timeframe,
         TimeSpan interval,
         string format,
-        string outputRootDirectory)
+        string outputRootDirectory,
+        ResolvedCandlizeScope resolvedScope)
     {
         var result = new Dictionary<string, List<CandleRow>>(StringComparer.Ordinal);
         var extension = format.Equals("csv", StringComparison.Ordinal) ? ".csv" : ".jsonl";
+        var combinedCsvOutputPath = format.Equals("csv", StringComparison.Ordinal)
+            ? BuildCombinedCsvOutputPath(outputRootDirectory, uniqueTrades[0].Instrument, timeframe, resolvedScope)
+            : null;
         var index = 0;
 
         while (index < uniqueTrades.Count)
@@ -439,7 +480,7 @@ public sealed class TradeToCandleGenerator
                 index++;
             }
 
-            AppendInstrumentCandles(uniqueTrades, start, index, exchange, timeframe, interval, instrument, extension, outputRootDirectory, result);
+            AppendInstrumentCandles(uniqueTrades, start, index, exchange, timeframe, interval, instrument, extension, outputRootDirectory, combinedCsvOutputPath, result);
         }
 
         return result;
@@ -455,6 +496,7 @@ public sealed class TradeToCandleGenerator
         string instrument,
         string extension,
         string outputRootDirectory,
+        string? combinedCsvOutputPath,
         Dictionary<string, List<CandleRow>> candlesByPath)
     {
         var firstBucket = FloorToInterval(uniqueTrades[startInclusive].TimestampUtc, interval);
@@ -471,8 +513,12 @@ public sealed class TradeToCandleGenerator
             }
 
             var candle = BuildCandleForBucket(uniqueTrades, bucketStart, tradeIndex, exchange, timeframe, instrument, currentBucket);
-            var day = currentBucket.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            var outputPath = Path.Combine(outputRootDirectory, instrument, timeframe, $"{day}{extension}");
+            var outputPath = combinedCsvOutputPath
+                ?? Path.Combine(
+                    outputRootDirectory,
+                    instrument,
+                    timeframe,
+                    currentBucket.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + extension);
 
             if (!candlesByPath.TryGetValue(outputPath, out var list))
             {
@@ -576,6 +622,29 @@ public sealed class TradeToCandleGenerator
         var intervalTicks = interval.Ticks;
         var flooredTicks = utcTimestamp.Ticks / intervalTicks * intervalTicks;
         var result = new DateTimeOffset(flooredTicks, TimeSpan.Zero);
+        return result;
+    }
+
+    /// <summary>
+    /// Builds the single combined CSV output path for the resolved inclusive UTC date range.
+    /// </summary>
+    private static string BuildCombinedCsvOutputPath(
+        string outputRootDirectory,
+        string instrument,
+        string timeframe,
+        ResolvedCandlizeScope resolvedScope)
+    {
+        var beginDateUtc = resolvedScope.BeginDateUtc ?? GetUtcDateFromPath(resolvedScope.InputFiles[0]);
+        var endDateUtc = resolvedScope.EndDateUtc ?? GetUtcDateFromPath(resolvedScope.InputFiles[^1]);
+        var fileName = $"{beginDateUtc:yyyyMMdd}-{endDateUtc:yyyyMMdd}.csv";
+        var result = Path.Combine(outputRootDirectory, instrument, timeframe, fileName);
+        return result;
+    }
+
+    private static DateOnly GetUtcDateFromPath(string path)
+    {
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(path);
+        var result = DateOnly.ParseExact(fileNameWithoutExtension, "yyyy-MM-dd", CultureInfo.InvariantCulture);
         return result;
     }
 

@@ -10,4 +10,6 @@ public sealed record CliOptions(
     string Instrument,
     string Timeframe,
     IReadOnlyList<DateOnly> Dates,
-    string Format = "csv");
+    string Format = "csv",
+    DateOnly? BeginDateUtc = null,
+    DateOnly? EndDateUtc = null);

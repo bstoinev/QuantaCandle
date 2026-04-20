@@ -36,6 +36,15 @@ public sealed class CliCommandTests
     }
 
     [Fact]
+    public void ParsesCandlizeCommandWithBeginAndEndAliases()
+    {
+        var options = CliCommand.Parse(["candlize", "btc-usdt", "--timeFrame", "1m", "-from", "20260330", "-to", "2026-04-01"]);
+
+        Assert.Equal(new DateOnly(2026, 3, 30), options.BeginDateUtc);
+        Assert.Equal(new DateOnly(2026, 4, 1), options.EndDateUtc);
+    }
+
+    [Fact]
     public void DefaultsExchangeAndWorkDirectoryWhenOptionsAreOmitted()
     {
         var options = CliCommand.Parse(["scan", "btc-usdt"]);

@@ -24,7 +24,7 @@ public sealed class TradeToCandleGeneratorTests
 
             Assert.Equal(2, result.CandleCount);
 
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
             var jsonlPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.jsonl");
             Assert.True(File.Exists(csvPath));
             Assert.False(File.Exists(jsonlPath));
@@ -71,7 +71,7 @@ public sealed class TradeToCandleGeneratorTests
 
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
 
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
             Assert.True(File.Exists(csvPath));
         }
         finally
@@ -94,7 +94,7 @@ public sealed class TradeToCandleGeneratorTests
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "jsonl"), CancellationToken.None);
 
             var jsonlPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.jsonl");
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
 
             Assert.True(File.Exists(jsonlPath));
             Assert.False(File.Exists(csvPath));
@@ -129,7 +129,7 @@ public sealed class TradeToCandleGeneratorTests
 
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
 
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
             var rows = await ReadCsvRowsAsync(csvPath);
 
             Assert.Equal(4, rows.Length);
@@ -163,15 +163,15 @@ public sealed class TradeToCandleGeneratorTests
             var rootA = Path.Combine(root, "a");
             var rootB = Path.Combine(root, "b");
 
-            await WriteTradeFileAsync(rootA, "binance", "BTC-USDT", "b.jsonl",
+            await WriteTradeFileAsync(rootA, "binance", "BTC-USDT", "2026-03-12.jsonl",
                 Trade("binance", "BTC-USDT", "2", "2026-03-12T12:00:20Z", 101m, 0.2m));
-            await WriteTradeFileAsync(rootA, "binance", "BTC-USDT", "a.jsonl",
+            await WriteTradeFileAsync(rootA, "binance", "BTC-USDT", "2026-03-13.jsonl",
                 Trade("binance", "BTC-USDT", "3", "2026-03-12T12:01:10Z", 99m, 0.3m),
                 Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m));
 
-            await WriteTradeFileAsync(rootB, "binance", "BTC-USDT", "a.jsonl",
+            await WriteTradeFileAsync(rootB, "binance", "BTC-USDT", "2026-03-13.jsonl",
                 Trade("binance", "BTC-USDT", "1", "2026-03-12T12:00:05Z", 100m, 0.1m));
-            await WriteTradeFileAsync(rootB, "binance", "BTC-USDT", "b.jsonl",
+            await WriteTradeFileAsync(rootB, "binance", "BTC-USDT", "2026-03-12.jsonl",
                 Trade("binance", "BTC-USDT", "2", "2026-03-12T12:00:20Z", 101m, 0.2m),
                 Trade("binance", "BTC-USDT", "3", "2026-03-12T12:01:10Z", 99m, 0.3m));
 
@@ -202,7 +202,7 @@ public sealed class TradeToCandleGeneratorTests
 
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
 
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
             var rows = await ReadCsvRowsAsync(csvPath);
 
             Assert.Equal("0.7", rows[1][6]);
@@ -235,7 +235,7 @@ public sealed class TradeToCandleGeneratorTests
             Assert.Equal(2, result.UniqueTradeCount);
             Assert.Equal(1, result.DuplicatesDropped);
 
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
             var rows = await ReadCsvRowsAsync(csvPath);
             Assert.Equal("0.75", rows[1][6]);
             Assert.Equal("75.25", rows[1][7]);
@@ -264,7 +264,7 @@ public sealed class TradeToCandleGeneratorTests
             var result = await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", []), CancellationToken.None);
 
             Assert.Equal(1, result.InputTradeCount);
-            Assert.True(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-30.csv")));
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 30), new DateOnly(2026, 3, 30))));
             Assert.False(File.Exists(Path.Combine(root, "candle-data", "binance", "ETH-USDT", "1m", "2026-03-30.csv")));
         }
         finally
@@ -288,7 +288,7 @@ public sealed class TradeToCandleGeneratorTests
             var result = await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "Binance", "BTC-USDT", "1m", []), CancellationToken.None);
 
             Assert.Equal(1, result.InputTradeCount);
-            Assert.True(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-28.csv")));
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 28), new DateOnly(2026, 3, 28))));
         }
         finally
         {
@@ -318,7 +318,7 @@ public sealed class TradeToCandleGeneratorTests
     }
 
     [Fact]
-    public async Task ScopeSelectionUsesOnlyRequestedDates()
+    public async Task MultiDayCandlizeRunEmitsOneCombinedCsvOnly()
     {
         var root = CreateTempRoot();
 
@@ -345,9 +345,12 @@ public sealed class TradeToCandleGeneratorTests
                 CancellationToken.None);
 
             Assert.Equal(2, result.InputTradeCount);
-            Assert.True(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-30.csv")));
-            Assert.True(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-04-01.csv")));
+            Assert.Equal(1, result.OutputFileCount);
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 30), new DateOnly(2026, 4, 1))));
+            Assert.False(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-30.csv")));
+            Assert.False(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-04-01.csv")));
             Assert.False(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-04-02.csv")));
+            Assert.Single(Directory.GetFiles(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m"), "*.csv", SearchOption.TopDirectoryOnly));
         }
         finally
         {
@@ -376,7 +379,7 @@ public sealed class TradeToCandleGeneratorTests
 
             Assert.Equal("keep-eth" + Environment.NewLine, await File.ReadAllTextAsync(unrelatedInstrumentPath, CancellationToken.None));
             Assert.Equal("keep-date" + Environment.NewLine, await File.ReadAllTextAsync(unrelatedDatePath, CancellationToken.None));
-            Assert.True(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-30.csv")));
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 30), new DateOnly(2026, 3, 30))));
         }
         finally
         {
@@ -399,7 +402,7 @@ public sealed class TradeToCandleGeneratorTests
             var result = await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "stub", "BTC-USDT", "1m", []), CancellationToken.None);
 
             Assert.Equal(1, result.InputTradeCount);
-            var csvPath = Path.Combine(root, "candle-data", "stub", "BTC-USDT", "1m", "2026-03-30.csv");
+            var csvPath = GetCombinedCsvPath(root, "stub", "BTC-USDT", "1m", new DateOnly(2026, 3, 30), new DateOnly(2026, 3, 30));
             var rows = await ReadCsvRowsAsync(csvPath);
             Assert.Equal("500", rows[1][2]);
         }
@@ -424,9 +427,132 @@ public sealed class TradeToCandleGeneratorTests
             var result = await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [new DateOnly(2026, 3, 30)]), CancellationToken.None);
 
             Assert.Equal(1, result.InputTradeCount);
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-30.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 30), new DateOnly(2026, 3, 30));
             var rows = await ReadCsvRowsAsync(csvPath);
             Assert.Equal("100", rows[1][2]);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task ScopeSelectionUsesResolvedInclusiveDateRange()
+    {
+        var root = CreateTempRoot();
+
+        try
+        {
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-03-30.jsonl",
+                Trade("binance", "BTC-USDT", "1", "2026-03-30T12:00:05Z", 100m, 1m));
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-04-01.jsonl",
+                Trade("binance", "BTC-USDT", "2", "2026-04-01T12:00:05Z", 101m, 1m));
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-04-02.jsonl",
+                Trade("binance", "BTC-USDT", "3", "2026-04-02T12:00:05Z", 102m, 1m));
+
+            var result = await TradeToCandleGenerator.Run(
+                new CliOptions(
+                    CliMode.Candlize,
+                    root,
+                    "binance",
+                    "BTC-USDT",
+                    "1m",
+                    [],
+                    BeginDateUtc: new DateOnly(2026, 4, 1),
+                    EndDateUtc: new DateOnly(2026, 4, 1)),
+                CancellationToken.None);
+
+            Assert.Equal(1, result.InputTradeCount);
+            Assert.False(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-30.csv")));
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 4, 1), new DateOnly(2026, 4, 1))));
+            Assert.False(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-04-02.csv")));
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task CombinedCsvFileNameUsesDiscoveredBoundsWhenBothBoundariesAreOmitted()
+    {
+        var root = CreateTempRoot();
+
+        try
+        {
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-04-05.jsonl",
+                Trade("binance", "BTC-USDT", "1", "2026-04-05T12:00:05Z", 100m, 1m));
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-04-07.jsonl",
+                Trade("binance", "BTC-USDT", "2", "2026-04-07T12:00:05Z", 101m, 1m));
+
+            await TradeToCandleGenerator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", []),
+                CancellationToken.None);
+
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 4, 5), new DateOnly(2026, 4, 7))));
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task CombinedCsvFileNameUsesResolvedMissingBoundary()
+    {
+        var root = CreateTempRoot();
+
+        try
+        {
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-04-05.jsonl",
+                Trade("binance", "BTC-USDT", "1", "2026-04-05T12:00:05Z", 100m, 1m));
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-04-07.jsonl",
+                Trade("binance", "BTC-USDT", "2", "2026-04-07T12:00:05Z", 101m, 1m));
+
+            await TradeToCandleGenerator.Run(
+                new CliOptions(
+                    CliMode.Candlize,
+                    root,
+                    "binance",
+                    "BTC-USDT",
+                    "1m",
+                    [],
+                    BeginDateUtc: new DateOnly(2026, 4, 6),
+                    EndDateUtc: null),
+                CancellationToken.None);
+
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 4, 6), new DateOnly(2026, 4, 7))));
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(root);
+        }
+    }
+
+    [Fact]
+    public async Task CombinedCsvContainsOneHeaderRowAndCandlesFromWholeSelectedRange()
+    {
+        var root = CreateTempRoot();
+
+        try
+        {
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-04-05.jsonl",
+                Trade("binance", "BTC-USDT", "1", "2026-04-05T12:00:05Z", 100m, 1m));
+            await WriteTradeFileAsync(root, "binance", "BTC-USDT", "2026-04-07.jsonl",
+                Trade("binance", "BTC-USDT", "2", "2026-04-07T12:00:05Z", 101m, 1m));
+
+            await TradeToCandleGenerator.Run(
+                new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", []),
+                CancellationToken.None);
+
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 4, 5), new DateOnly(2026, 4, 7));
+            var rows = await ReadCsvRowsAsync(csvPath);
+
+            Assert.Equal("OpenTimeUtc", rows[0][0]);
+            Assert.Equal(1, rows.Count(static row => row[0].Equals("OpenTimeUtc", StringComparison.Ordinal)));
+            Assert.Contains(rows, static row => row[0].Equals("2026-04-05T12:00:00.0000000Z", StringComparison.Ordinal));
+            Assert.Contains(rows, static row => row[0].Equals("2026-04-07T12:00:00.0000000Z", StringComparison.Ordinal));
         }
         finally
         {
@@ -449,7 +575,7 @@ public sealed class TradeToCandleGeneratorTests
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "jsonl"), CancellationToken.None);
 
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
             var csvRows = await ReadCsvRowsAsync(csvPath);
             Assert.Equal("69.8", csvRows[1][7]);
             Assert.Equal("49.6", csvRows[1][8]);
@@ -482,7 +608,7 @@ public sealed class TradeToCandleGeneratorTests
 
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
 
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
             var rows = await ReadCsvRowsAsync(csvPath);
             Assert.Equal("75.25", rows[1][7]);
             Assert.Equal("75.25", rows[1][8]);
@@ -507,7 +633,7 @@ public sealed class TradeToCandleGeneratorTests
 
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
 
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
             var rows = await ReadCsvRowsAsync(csvPath);
             Assert.Equal("30.2", rows[1][7]);
             Assert.Equal("0", rows[1][8]);
@@ -653,6 +779,24 @@ public sealed class TradeToCandleGeneratorTests
         return snapshot;
     }
 
+    private static string GetCombinedCsvPath(
+        string workDirectory,
+        string exchange,
+        string instrument,
+        string timeframe,
+        DateOnly beginDateUtc,
+        DateOnly endDateUtc)
+    {
+        var result = Path.Combine(
+            workDirectory,
+            "candle-data",
+            exchange,
+            instrument,
+            timeframe,
+            $"{beginDateUtc:yyyyMMdd}-{endDateUtc:yyyyMMdd}.csv");
+        return result;
+    }
+
     [Theory]
     [InlineData("1s", "2026-03-12T12:34:27Z", "2026-03-12T12:34:27Z")]
     [InlineData("10s", "2026-03-12T12:34:27Z", "2026-03-12T12:34:20Z")]
@@ -670,7 +814,7 @@ public sealed class TradeToCandleGeneratorTests
 
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", timeframe, [], "csv"), CancellationToken.None);
 
-            var csvPath = Path.Combine(root, "candle-data", "binance", "BTC-USDT", timeframe, "2026-03-12.csv");
+            var csvPath = GetCombinedCsvPath(root, "binance", "BTC-USDT", timeframe, new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12));
             var rows = await ReadCsvRowsAsync(csvPath);
 
             Assert.Equal(DateTimeOffset.Parse(expectedBucketStart, CultureInfo.InvariantCulture), DateTimeOffset.Parse(rows[1][0], CultureInfo.InvariantCulture));
@@ -699,7 +843,7 @@ public sealed class TradeToCandleGeneratorTests
             var result = await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", timeframe, [], "csv"), CancellationToken.None);
 
             Assert.Equal(1, result.InputTradeCount);
-            Assert.True(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", timeframe, "2026-03-12.csv")));
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", timeframe, new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12))));
         }
         finally
         {
@@ -747,8 +891,8 @@ public sealed class TradeToCandleGeneratorTests
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1s", [], "csv"), CancellationToken.None);
             await TradeToCandleGenerator.Run(new CliOptions(CliMode.Candlize, root, "binance", "BTC-USDT", "1m", [], "csv"), CancellationToken.None);
 
-            Assert.True(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1s", "2026-03-12.csv")));
-            Assert.True(File.Exists(Path.Combine(root, "candle-data", "binance", "BTC-USDT", "1m", "2026-03-12.csv")));
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", "1s", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12))));
+            Assert.True(File.Exists(GetCombinedCsvPath(root, "binance", "BTC-USDT", "1m", new DateOnly(2026, 3, 12), new DateOnly(2026, 3, 12))));
         }
         finally
         {
