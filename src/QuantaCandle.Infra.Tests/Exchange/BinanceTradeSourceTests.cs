@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using System.Reflection;
 
 using LogMachina;
 
@@ -14,6 +15,16 @@ namespace QuantaCandle.Infra.Tests.Exchange;
 /// </summary>
 public sealed class BinanceTradeSourceTests
 {
+    [Fact]
+    public void LiveTradeMappingCarriesBuyerIsMakerFromWebSocketMessage()
+    {
+        var makerTrade = MapTrade("""{"e":"trade","E":1773352785119,"s":"BTCUSDT","t":31156021,"p":"70301.03000000","q":"0.00692000","T":1773352785118,"m":true}""");
+        var takerTrade = MapTrade("""{"e":"trade","E":1773352785120,"s":"BTCUSDT","t":31156022,"p":"70301.04000000","q":"0.00792000","T":1773352785119,"m":false}""");
+
+        Assert.True(makerTrade.BuyerIsMaker);
+        Assert.False(takerTrade.BuyerIsMaker);
+    }
+
     [Fact]
     public async Task GetLiveTradesBlocksProducerAfterOneBufferedTrade()
     {
@@ -108,6 +119,26 @@ public sealed class BinanceTradeSourceTests
     {
         var key = new TradeKey(new ExchangeId("Binance"), Instrument.Parse("BTC-USDT"), tradeId);
         var result = new TradeInfo(key, new DateTimeOffset(2026, 3, 11, 12, 0, 0, TimeSpan.Zero), 50_000m, 0.001m, buyerIsMaker: false);
+        return result;
+    }
+
+    private static TradeInfo MapTrade(string json)
+    {
+        var instrument = Instrument.Parse("BTC-USDT");
+        var dtoType = typeof(BinanceTradeSource).Assembly.GetType("QuantaCandle.Exchange.Binance.BinanceTradeMessageDto");
+        Assert.NotNull(dtoType);
+
+        var tryDeserializeMethod = typeof(BinanceTradeSource).GetMethod("TryDeserializeTrade", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(tryDeserializeMethod);
+
+        var arguments = new object?[] { json, null };
+        var dto = tryDeserializeMethod.Invoke(null, arguments);
+        Assert.NotNull(dto);
+
+        var mapMethod = typeof(BinanceTradeSource).GetMethod("Map", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(mapMethod);
+
+        var result = Assert.IsType<TradeInfo>(mapMethod.Invoke(null, [dto, instrument]));
         return result;
     }
 }

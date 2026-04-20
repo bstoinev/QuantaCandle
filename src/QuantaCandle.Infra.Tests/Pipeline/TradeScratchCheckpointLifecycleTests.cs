@@ -54,6 +54,35 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
+    public async Task SameDayCheckpointWritesIsBuyerMakerIntoScratchJsonl()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var (lifecycle, _, _) = CreateLifecycle(localRoot);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero), buyerIsMaker: true),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero), buyerIsMaker: false),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero), buyerIsMaker: true),
+            ], CancellationToken.None);
+
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, Instrument.Parse("BTC-USDT"));
+            var payload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
+
+            Assert.Equal([true, false], ParseBuyerIsMakerValues(payload));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
     public async Task RestartCheckpointFinalizesRecoveredScratchBeforeStartingNewDay()
     {
         var localRoot = CreateTempDirectory();
@@ -131,6 +160,42 @@ public sealed class TradeScratchCheckpointLifecycleTests
             Assert.Equal(finalizedPath, dispatch.FinalizedFilePath);
             Assert.True(dispatch.FileExistedAtDispatch);
             Assert.Equal(new DateOnly(2026, 3, 12), dispatch.UtcDate);
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
+    public async Task CrossMidnightCheckpointPreservesIsBuyerMakerInFinalizedAndScratchJsonl()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var dispatcher = new RecordingTradeFinalizedFileDispatcher();
+            var (lifecycle, _, _) = CreateLifecycle(localRoot, dispatcher);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 23, 59, 58, TimeSpan.Zero), buyerIsMaker: true),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 23, 59, 59, TimeSpan.Zero), buyerIsMaker: false),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 13, 0, 0, 0, TimeSpan.Zero), buyerIsMaker: true),
+                CreateTrade("4", new DateTimeOffset(2026, 3, 13, 0, 0, 1, TimeSpan.Zero), buyerIsMaker: false),
+            ], CancellationToken.None);
+
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            var instrument = Instrument.Parse("BTC-USDT");
+            var finalizedPath = TradeLocalDailyFilePath.Build(localRoot, StubExchange, instrument, new DateOnly(2026, 3, 12));
+            var scratchPath = TradeLocalDailyFilePath.BuildScratch(localRoot, StubExchange, instrument);
+            var finalizedPayload = await File.ReadAllTextAsync(finalizedPath, CancellationToken.None);
+            var scratchPayload = await File.ReadAllTextAsync(scratchPath, CancellationToken.None);
+
+            Assert.Equal([true, false], ParseBuyerIsMakerValues(finalizedPayload));
+            Assert.Equal([true], ParseBuyerIsMakerValues(scratchPayload));
+            Assert.Single(dispatcher.Dispatches);
         }
         finally
         {
@@ -592,6 +657,38 @@ public sealed class TradeScratchCheckpointLifecycleTests
     }
 
     [Fact]
+    public async Task SnapshotDispatchPreservesIsBuyerMakerInSnapshotJsonl()
+    {
+        var localRoot = CreateTempDirectory();
+
+        try
+        {
+            var snapshotDispatcher = new RecordingTradeSnapshotFileDispatcher();
+            var clock = new StubClock(new DateTimeOffset(2026, 3, 12, 14, 15, 16, 789, TimeSpan.Zero));
+            var (lifecycle, _, _) = CreateLifecycle(localRoot, tradeSnapshotFileDispatcher: snapshotDispatcher, clock: clock);
+
+            await lifecycle.TrackAppendedTrades(
+            [
+                CreateTrade("1", new DateTimeOffset(2026, 3, 12, 0, 0, 0, TimeSpan.Zero), buyerIsMaker: true),
+                CreateTrade("2", new DateTimeOffset(2026, 3, 12, 0, 0, 1, TimeSpan.Zero), buyerIsMaker: false),
+                CreateTrade("3", new DateTimeOffset(2026, 3, 12, 0, 0, 2, TimeSpan.Zero), buyerIsMaker: true),
+            ], CancellationToken.None);
+            await lifecycle.CheckpointActive(CancellationToken.None);
+
+            await lifecycle.DispatchActiveSnapshot(CancellationToken.None);
+
+            var dispatch = Assert.Single(snapshotDispatcher.Dispatches);
+            var snapshotPayload = await File.ReadAllTextAsync(dispatch.SnapshotFilePath, CancellationToken.None);
+
+            Assert.Equal([true, false], ParseBuyerIsMakerValues(snapshotPayload));
+        }
+        finally
+        {
+            DeleteDirectory(localRoot);
+        }
+    }
+
+    [Fact]
     public async Task SnapshotDispatchIgnoresOtherScratchFilesUnderSameLocalRoot()
     {
         var localRoot = CreateTempDirectory();
@@ -699,10 +796,10 @@ public sealed class TradeScratchCheckpointLifecycleTests
         return result;
     }
 
-    private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp, string instrumentText = "BTC-USDT")
+    private static TradeInfo CreateTrade(string tradeId, DateTimeOffset timestamp, string instrumentText = "BTC-USDT", bool buyerIsMaker = false)
     {
         var key = new TradeKey(StubExchange, Instrument.Parse(instrumentText), tradeId);
-        var result = new TradeInfo(key, timestamp, 1m, 1m, buyerIsMaker: false);
+        var result = new TradeInfo(key, timestamp, 1m, 1m, buyerIsMaker);
         return result;
     }
 
@@ -720,6 +817,25 @@ public sealed class TradeScratchCheckpointLifecycleTests
 
             using var document = JsonDocument.Parse(line);
             result.Add(document.RootElement.GetProperty("tradeId").GetString());
+        }
+
+        return result;
+    }
+
+    private static List<bool> ParseBuyerIsMakerValues(string payload)
+    {
+        var result = new List<bool>();
+        var lines = payload.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var line in lines)
+        {
+            if (!line.StartsWith("{", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            using var document = JsonDocument.Parse(line);
+            result.Add(document.RootElement.GetProperty("isBuyerMaker").GetBoolean());
         }
 
         return result;

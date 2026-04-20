@@ -1,4 +1,5 @@
 using QuantaCandle.Core.Trading;
+using System.Text.Json;
 
 namespace QuantaCandle.Infra.Tests.Storage;
 
@@ -7,6 +8,47 @@ namespace QuantaCandle.Infra.Tests.Storage;
 /// </summary>
 public sealed class TradeJsonlFileTests
 {
+    [Fact]
+    public async Task AppendTradesWritesIsBuyerMakerIntoJsonlRows()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var rootDirectory = Path.Combine(Path.GetTempPath(), "QuantaCandle.TradeJsonlFileTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(rootDirectory);
+
+        try
+        {
+            var path = Path.Combine(rootDirectory, "BTC-USDT", "qc-scratch.jsonl");
+            var trades = new[]
+            {
+                new TradeInfo(
+                    new TradeKey(new ExchangeId("Binance"), Instrument.Parse("BTC-USDT"), "101"),
+                    new DateTimeOffset(2026, 3, 12, 9, 30, 0, TimeSpan.Zero),
+                    100m,
+                    1m,
+                    buyerIsMaker: true),
+                new TradeInfo(
+                    new TradeKey(new ExchangeId("Binance"), Instrument.Parse("BTC-USDT"), "102"),
+                    new DateTimeOffset(2026, 3, 12, 9, 31, 0, TimeSpan.Zero),
+                    101m,
+                    2m,
+                    buyerIsMaker: false),
+            };
+
+            await TradeJsonlFile.AppendTrades(path, trades, cancellationToken);
+
+            var payload = await File.ReadAllTextAsync(path, cancellationToken);
+
+            Assert.Equal([true, false], ParseBuyerIsMakerValues(payload));
+        }
+        finally
+        {
+            if (Directory.Exists(rootDirectory))
+            {
+                Directory.Delete(rootDirectory, true);
+            }
+        }
+    }
+
     [Fact]
     public async Task ResumeBoundaryReaderStreamsScratchLinesWithoutWholeFileMaterialization()
     {
@@ -98,6 +140,20 @@ public sealed class TradeJsonlFileTests
             quantity: 1m,
             buyerIsMaker: false);
         var result = TradeJsonlFile.BuildPayload([trade]).TrimEnd();
+        return result;
+    }
+
+    private static List<bool> ParseBuyerIsMakerValues(string payload)
+    {
+        var result = new List<bool>();
+        var lines = payload.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var line in lines)
+        {
+            using var document = JsonDocument.Parse(line);
+            result.Add(document.RootElement.GetProperty("isBuyerMaker").GetBoolean());
+        }
+
         return result;
     }
 
