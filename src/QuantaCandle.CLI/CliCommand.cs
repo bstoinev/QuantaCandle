@@ -61,7 +61,8 @@ public static class CliCommand
         writer.WriteLine("  - --exchange defaults to Binance.");
         writer.WriteLine("  - Trade inputs are read from <workDir>\\trade-data\\<exchange>\\<INSTRUMENT>\\yyyy-MM-dd.jsonl.");
         writer.WriteLine("  - candlize requires -time or --timeFrame using values like 1s, 10s, 1m, 5m, or 1h.");
-        writer.WriteLine("  - Candle outputs are written to <workDir>\\candle-data\\<exchange>\\<INSTRUMENT>\\<timeframe>\\yyyy-MM-dd.csv.");
+        writer.WriteLine("  - Candle CSV outputs are written to <workDir>\\candle-data\\<exchange>\\<INSTRUMENT>\\<timeframe>\\yyyyMMdd-yyyyMMdd.csv for the resolved date scope.");
+        writer.WriteLine("  - The current CLI writes CSV output only.");
         writer.WriteLine("  - --dates and -on accept one date or a comma-separated list using yyyy-MM-dd or yyyyMMdd.");
         writer.WriteLine("  - --begin/-from and --end/-to accept one UTC calendar date using yyyy-MM-dd or yyyyMMdd.");
         writer.WriteLine("  - scan reports gaps without modifying files.");
