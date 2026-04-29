@@ -221,6 +221,7 @@ public sealed class TradeRecorderCommandTests
         Assert.Contains("BTCUSDT --exchange Binance|-x Binance", help, StringComparison.Ordinal);
         Assert.Contains("[--sink file|s3|null|-to file|s3|null]", help, StringComparison.Ordinal);
         Assert.Contains("Omit --duration to keep recording until the host or process is stopped.", help, StringComparison.Ordinal);
+        Assert.Contains("Stub/testing source option: [--rate 10]. It controls Stub source trades per second only; it does not throttle Binance websocket ingestion.", help, StringComparison.Ordinal);
         Assert.Contains("[--outDir trade-data]", help, StringComparison.Ordinal);
         Assert.Contains("<working-dir>\\trade-data\\<exchange>\\<instrument>\\yyyy-MM-dd.jsonl", help, StringComparison.Ordinal);
     }

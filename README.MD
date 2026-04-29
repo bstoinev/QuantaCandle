@@ -41,7 +41,7 @@ dotnet run -c Release --project src\QuantaCandle.TradeRecorder -- --help
 Current command shape:
 
 ```text
-BTCUSDT --exchange Binance|-x Binance [--duration 10m] [--rate 10] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--cacheSize 1024] [--sink file|s3|null|-to file|s3|null] [--outDir trade-data]
+BTCUSDT --exchange Binance|-x Binance [--duration 10m] [--capacity 10000] [--batchSize 500] [--flushInterval 1s] [--checkpointInterval 1h] [--cacheSize 1024] [--sink file|s3|null|-to file|s3|null] [--outDir trade-data]
 ```
 
 Operational notes:
@@ -58,6 +58,7 @@ Operational notes:
 - `--binanceWsBase` overrides the Binance websocket base URL.
 - Default Binance global websocket base is `wss://stream.binance.com:9443`.
 - Binance US websocket base is `wss://stream.binance.us:9443`.
+- `--rate` is a Stub/testing source setting; it does not throttle Binance websocket ingestion.
 
 Examples:
 
@@ -311,7 +312,7 @@ GHCR workflow:
 ECR workflow:
 
 - File: `.github\workflows\docker2ecr.yml`
-- Trigger: `push` to `main` and `workflow_dispatch`
+- Trigger: `push` to `master` and `workflow_dispatch`
 - Builds `DOCKERFILE`
 - Publishes `latest` and `<commit-sha>` tags to the configured ECR repository
 
